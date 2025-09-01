@@ -1251,87 +1251,16 @@ with st.sidebar:
         
         st.info("💡 **Tip:** Higher safety factors increase bracing requirements but don't directly multiply BOM quantities. Use 'Extras %' for material contingencies.")
     
-    # Additional configuration options
-    with st.expander("🔧 Advanced Settings", expanded=False):
-        st.subheader("Analysis Options")
-        
-        auto_ballast = st.checkbox(
-            "Auto-calculate minimum ballast",
-            value=True,
-            help="Automatically calculate minimum ballast requirements based on structure height, area, and wind exposure."
-        )
-        
-        include_weather_protection = st.checkbox(
-            "Include weather protection allowance",
-            value=False,
-            help="Add materials for temporary weather protection (tarpaulins, barriers). Adds ~5% to perimeter materials."
-        )
-        
-        st.subheader("BOM Format Options")
-        
-        group_similar_items = st.checkbox(
-            "Group similar components",
-            value=True,
-            help="Combine similar items (e.g., all 2.0m standards) into single line items. Uncheck for detailed component-by-component listing."
-        )
-        
-        include_unit_weights = st.checkbox(
-            "Include component weights",
-            value=False,
-            help="Add weight estimates for each component type. Useful for logistics planning and crane capacity calculations."
-        )
-        
-        st.subheader("Engineering Validation")
-        
-        strict_validation = st.checkbox(
-            "Strict validation mode",
-            value=False,
-            help="Apply stricter engineering limits and additional safety checks. May flag structures that would pass basic validation."
-        )
-        
-        # Create enhanced rules object with new options
-        bom_rules = BOMRules(
-            plan_brace_alt_lifts=plan_brace_alt,
-            diag_brace_alt_lifts=diag_brace_alt,
-            tie_frequency_lifts=tie_frequency,
-            live_load_factor=live_load_factor,
-            wind_load_factor=wind_load_factor,
-            bridge_spanning_factor=bridge_span_factor,
-            wall_continuity_factor=wall_continuity_factor,
-            cantilever_support_factor=cantilever_support_factor
-        )
-        
-        # Store additional options in session state for use throughout app
-        st.session_state.config = {
-            'auto_ballast': auto_ballast,
-            'include_weather_protection': include_weather_protection,
-            'group_similar_items': group_similar_items,
-            'include_unit_weights': include_unit_weights,
-            'strict_validation': strict_validation,
-            'extras_pct': extras_pct
-        }
-
-# Optional: Add configuration summary at bottom of sidebar
-with st.sidebar:
-    st.divider()
-    st.caption("📊 **Current Config Summary**")
-    st.caption(f"Safety margins: Live {live_load_factor:.1f}x, Wind {wind_load_factor:.1f}x")
-    st.caption(f"Bridge factor: {bridge_span_factor:.1f}x, Wall factor: {wall_continuity_factor:.1f}x")
-    st.caption(f"Extras allowance: {extras_pct}%")
-    
-    # Quick preset buttons
-    st.caption("⚡ **Quick Presets:**")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Conservative", help="Higher safety factors and material allowances"):
-            # Set conservative values
-            st.session_state.conservative_mode = True
-            st.experimental_rerun()
-    with col2:
-        if st.button("Optimized", help="Standard factors for typical projects"):
-            # Set optimized values  
-            st.session_state.conservative_mode = False
-            st.experimental_rerun()
+    # Create rules object
+    bom_rules = BOMRules(
+        plan_brace_alt_lifts=plan_brace_alt,
+        diag_brace_alt_lifts=diag_brace_alt,
+        tie_frequency_lifts=tie_frequency,
+        live_load_factor=live_load_factor,
+        wind_load_factor=wind_load_factor,
+        bridge_spanning_factor=bridge_span_factor,
+        wall_continuity_factor=wall_continuity_factor,
+        cantilever_support_factor=cantilever_support_factor
     )
 
 # Main content area
@@ -1537,7 +1466,7 @@ with tab1:
             st.write("• **Targeted:** You specify type for higher accuracy")
 
 # ============================================================================
-# TAB 2: PARAMETERS (unchanged)
+# TAB 2: PARAMETERS
 # ============================================================================
 with tab2:
     st.header("Structure Parameters")
@@ -1755,7 +1684,7 @@ with tab2:
             st.session_state.bom_calculated = False
 
 # ============================================================================
-# TAB 3: BOM GENERATION (unchanged)
+# TAB 3: BOM GENERATION
 # ============================================================================
 with tab3:
     st.header("Multi-Structure BOM Generation")
@@ -1881,7 +1810,7 @@ Bill of Materials:
             )
 
 # ============================================================================
-# TAB 4: VALIDATION (unchanged)
+# TAB 4: VALIDATION
 # ============================================================================
 with tab4:
     st.header("Multi-Structure Engineering Validation")
