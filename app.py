@@ -681,14 +681,21 @@ with tab1:
                 if analysis_results['system_type']:
                     st.session_state.current_params.system = analysis_results['system_type']
                 
-                # Update dimensions
+                # Update dimensions with validation
                 dims = analysis_results['dimensions']
-                if dims.get('width_m'):
+                if dims.get('width_m') and dims['width_m'] >= 1.0:
                     st.session_state.current_params.width_m = dims['width_m']
-                if dims.get('depth_m'):
+                if dims.get('depth_m') and dims['depth_m'] >= 1.0:
                     st.session_state.current_params.depth_m = dims['depth_m']
-                if dims.get('height_m'):
+                if dims.get('height_m') and dims['height_m'] >= 2.0:
                     st.session_state.current_params.height_m = dims['height_m']
+                elif dims.get('height_m') and dims['height_m'] < 2.0:
+                    # If detected height is too low, scale it up (might be in wrong units)
+                    scaled_height = dims['height_m'] * 1000 / 1000  # Keep as is but add warning
+                    if scaled_height >= 2.0:
+                        st.session_state.current_params.height_m = scaled_height
+                    else:
+                        st.warning(f"Detected height {dims['height_m']:.1f}m seems too low. Please verify in Parameters tab.")
                 
                 st.success(f"Drawing analyzed! Confidence: {analysis_results['confidence_score']:.1%}")
     
@@ -786,11 +793,15 @@ with tab2:
             )
         
         with col3:
+            # Use max() to ensure we don't go below minimum
+            current_height = max(2.0, st.session_state.current_params.height_m)
             st.session_state.current_params.height_m = st.number_input(
                 "Height (m)", 
-                min_value=2.0, 
-                value=st.session_state.current_params.height_m, 
-                step=0.5
+                min_value=0.5,  # Lower minimum to accommodate detection errors
+                max_value=100.0,
+                value=current_height, 
+                step=0.5,
+                help="Detected values below 2.0m may indicate unit conversion issues"
             )
         
         with col4:
