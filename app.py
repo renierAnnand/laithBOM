@@ -22,9 +22,14 @@ warnings.filterwarnings('ignore')
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
+# Plotly imports made optional
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
 
 # Optional dependencies for enhanced functionality
 try:
@@ -780,8 +785,11 @@ class EngineeringValidator:
 # ============================================================================
 
 class StructureVisualizer:
-    def create_3d_view(self, params: TowerParams) -> go.Figure:
+    def create_3d_view(self, params: TowerParams):
         """Create 3D visualization of the structure"""
+        if not PLOTLY_AVAILABLE:
+            return self._create_text_view(params)
+            
         fig = go.Figure()
         
         # Create basic structure outline
@@ -835,8 +843,24 @@ class StructureVisualizer:
         
         return fig
     
-    def create_load_analysis_chart(self, params: TowerParams, bom_df: pd.DataFrame) -> go.Figure:
+    def _create_text_view(self, params: TowerParams):
+        """Create text-based visualization when plotly is not available"""
+        view_data = {
+            "Structure": params.tower_name,
+            "System": params.system.value,
+            "Dimensions (W×D×H)": f"{params.width_m}×{params.depth_m}×{params.height_m}m",
+            "Bay Spacing": f"{params.bay_m}m",
+            "Number of Lifts": params.lifts,
+            "Platform Levels": str(params.platform_levels),
+            "Total Plan Area": f"{params.width_m * params.depth_m:.1f}m²"
+        }
+        return view_data
+    
+    def create_load_analysis_chart(self, params: TowerParams, bom_df: pd.DataFrame):
         """Create load analysis visualization"""
+        if not PLOTLY_AVAILABLE:
+            return self._create_text_analysis(params, bom_df)
+            
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=('Wind Pressure vs Height', 'Component Weight Distribution', 
@@ -891,6 +915,30 @@ class StructureVisualizer:
         
         fig.update_layout(height=800, title_text="Structural Load Analysis")
         return fig
+    
+    def _create_text_analysis(self, params: TowerParams, bom_df: pd.DataFrame):
+        """Create text-based analysis when plotly is not available"""
+        wind_pressure_top = params.wind_loading.get_design_pressure(params.height_m)
+        total_components = bom_df["Total for Delivery"].sum()
+        
+        analysis_data = {
+            "Wind Analysis": {
+                "Design Wind Speed": f"{params.wind_loading.design_speed_ms} m/s",
+                "Pressure at Top": f"{wind_pressure_top:.2f} kN/m²",
+                "Exposure Category": params.wind_loading.exposure_category
+            },
+            "Component Summary": {
+                "Total Components": total_components,
+                "Unique Items": len(bom_df),
+                "Estimated Weight": f"{total_components * 5:,} kg"
+            },
+            "Load Factors": {
+                "Dead Load Factor": "1.2",
+                "Live Load Factor": "1.4", 
+                "Wind Load Factor": "1.2"
+            }
+        }
+        return analysis_data
 
 # ============================================================================
 # ENHANCED STREAMLIT APPLICATION
@@ -1384,8 +1432,15 @@ with tab4:
     
     with col1:
         visualizer = StructureVisualizer()
-        fig_3d = visualizer.create_3d_view(st.session_state.current_params)
-        st.plotly_chart(fig_3d, use_container_width=True)
+        structure_view = visualizer.create_3d_view(st.session_state.current_params)
+        
+        if PLOTLY_AVAILABLE:
+            st.plotly_chart(structure_view, use_container_width=True)
+        else:
+            st.warning("📊 Install plotly for 3D visualization: `pip install plotly`")
+            st.subheader("Structure Overview")
+            for key, value in structure_view.items():
+                st.write(f"**{key}:** {value}")
     
     with col2:
         st.subheader("📊 Structure Summary")
@@ -1407,8 +1462,16 @@ with tab4:
     st.subheader("📈 Structural Load Analysis")
     
     if st.session_state.bom_calculated and 'bom_df' in st.session_state:
-        fig_loads = visualizer.create_load_analysis_chart(st.session_state.current_params, st.session_state.bom_df)
-        st.plotly_chart(fig_loads, use_container_width=True)
+        load_analysis = visualizer.create_load_analysis_chart(st.session_state.current_params, st.session_state.bom_df)
+        
+        if PLOTLY_AVAILABLE:
+            st.plotly_chart(load_analysis, use_container_width=True)
+        else:
+            st.subheader("Load Analysis Summary")
+            for category, data in load_analysis.items():
+                st.write(f"**{category}:**")
+                for key, value in data.items():
+                    st.write(f"  • {key}: {value}")
     else:
         st.info("Generate BOM first to see load analysis charts.")
 
