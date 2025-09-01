@@ -1,6 +1,6 @@
 # app.py
 # Multi-Structure Streamlit app: Tower/Bridge/Wall Spec → Auto Material List
-# Author: Claude (Multi-Structure version)
+# Author: Claude (Multi-Structure version with fixes)
 # Handles: Towers, Bridges, Walls, and other scaffolding structures
 
 import io
@@ -165,7 +165,7 @@ class BOMRules:
     cantilever_support_factor: float = 1.8  # Heavy back-propping required
 
 # ============================================================================
-# ADVANCED DRAWING ANALYSIS FOR MULTIPLE STRUCTURE TYPES
+# ADVANCED DRAWING ANALYSIS FOR MULTIPLE STRUCTURE TYPES - FIXED
 # ============================================================================
 
 class MultiStructureAnalyzer:
@@ -226,46 +226,63 @@ class MultiStructureAnalyzer:
         }
     
     def extract_text_from_pdf(self, file_bytes: bytes) -> str:
-        """Enhanced text extraction"""
+        """Enhanced text extraction with better error handling"""
         text = ""
         
+        # Try pdfplumber first
         if pdfplumber is not None:
             try:
                 with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                     for page in pdf.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-                            
+                        try:
+                            page_text = page.extract_text()
+                            if page_text:
+                                text += page_text + "\n"
+                                
                             # Also try to extract from tables
                             tables = page.extract_tables()
-                            for table in tables or []:
-                                for row in table:
-                                    text += " ".join([str(cell) for cell in row if cell]) + "\n"
-                                    
+                            if tables:
+                                for table in tables:
+                                    for row in table:
+                                        if row:
+                                            row_text = " ".join([str(cell) for cell in row if cell])
+                                            if row_text.strip():
+                                                text += row_text + "\n"
+                        except Exception:
+                            # Skip problematic pages
+                            continue
+                            
             except Exception as e:
                 st.warning(f"PDF text extraction failed: {e}")
         
-        # OCR fallback 
-        if not text.strip() and convert_from_bytes and pytesseract:
+        # OCR fallback with better error handling
+        if not text.strip() and convert_from_bytes and pytesseract and Image:
             try:
-                images = convert_from_bytes(file_bytes, dpi=300)
-                for img in images:
-                    if Image:
+                images = convert_from_bytes(file_bytes, dpi=200)  # Reduced DPI for speed
+                for i, img in enumerate(images):
+                    try:
                         if img.mode != 'L':
                             img = img.convert('L')
                         enhancer = ImageEnhance.Contrast(img)
                         img = enhancer.enhance(1.5)
-                    text += pytesseract.image_to_string(img, config='--psm 6') + "\n"
+                        ocr_text = pytesseract.image_to_string(img, config='--psm 6')
+                        if ocr_text.strip():
+                            text += ocr_text + "\n"
+                    except Exception:
+                        # Skip problematic images
+                        continue
+                        
             except Exception as e:
                 st.warning(f"OCR extraction failed: {e}")
+                # Return empty string rather than failing completely
+                return ""
         
         return text
     
     def analyze_drawing(self, text: str, expected_type: Optional[StructureType] = None) -> Dict[str, Any]:
-        """Comprehensive multi-structure analysis with optional type hint"""
+        """Comprehensive multi-structure analysis with improved error handling"""
         results = {
-            'structure_type': expected_type or StructureType.TOWER,  # Use hint or default
+            'structure_type': expected_type or StructureType.TOWER,
             'structure_name': None,
             'structure_count': 1,
             'system_type': SystemType.RINGLOCK,
@@ -285,125 +302,199 @@ class MultiStructureAnalyzer:
             'type_hint_used': expected_type is not None
         }
         
+        # If text is empty or too short, return early with low confidence
+        if not text or len(text.strip()) < 10:
+            results['detection_details'] = ["Insufficient text content for analysis"]
+            results['confidence_score'] = 0.0
+            return results
+        
         confidence_points = 0
         max_points = 15
         detection_details = []
         
-        # 1. DETECT OR VALIDATE STRUCTURE TYPE
-        if expected_type:
-            # Validate expected type against content
-            detected_type = self._detect_structure_type(text)
-            if detected_type == expected_type:
-                confidence_points += 5  # Bonus for matching expectation
-                detection_details.append(f"Confirmed expected type: {expected_type.value}")
-                results['structure_type'] = expected_type
+        try:
+            # 1. DETECT OR VALIDATE STRUCTURE TYPE
+            if expected_type:
+                detected_type = self._detect_structure_type(text)
+                if detected_type == expected_type:
+                    confidence_points += 5
+                    detection_details.append(f"Confirmed expected type: {expected_type.value}")
+                    results['structure_type'] = expected_type
+                else:
+                    confidence_points += 2
+                    detection_details.append(f"Using expected type: {expected_type.value} (detected: {detected_type.value if detected_type else 'unclear'})")
+                    results['structure_type'] = expected_type
             else:
-                confidence_points += 2  # Partial credit for using hint
-                detection_details.append(f"Using expected type: {expected_type.value} (detected: {detected_type.value if detected_type else 'unclear'})")
-                results['structure_type'] = expected_type
-        else:
-            # Auto-detect structure type
-            structure_type = self._detect_structure_type(text)
-            if structure_type:
-                results['structure_type'] = structure_type
-                confidence_points += 3
-                detection_details.append(f"Auto-detected structure type: {structure_type.value}")
-        
-        # 2. EXTRACT STRUCTURE NAME AND COUNT (structure-specific patterns)
-        name_info = self._extract_structure_name(text, results['structure_type'])
-        if name_info['name']:
-            results['structure_name'] = name_info['name']
-            confidence_points += 2
-            detection_details.append(f"Structure name: {name_info['name']}")
-        if name_info['count']:
-            results['structure_count'] = name_info['count']
-            confidence_points += 1
-            detection_details.append(f"Count: {name_info['count']}")
-        
-        # 3. TARGETED DIMENSION EXTRACTION BASED ON TYPE
-        structure_type = results['structure_type']
-        
-        if structure_type == StructureType.BRIDGE:
-            dims, spans = self._extract_bridge_dimensions_targeted(text)
-            results['dimensions'].update(dims)
-            results['spans'] = spans
-            if dims or spans:
-                confidence_points += 4
-                detection_details.append(f"Bridge analysis: {len(spans)} spans, total: {dims.get('total_length_m', 'unknown')}m")
-        
-        elif structure_type == StructureType.WALL:
-            dims = self._extract_wall_dimensions_targeted(text)
-            results['dimensions'].update(dims)
-            if dims:
-                confidence_points += 3
-                detection_details.append(f"Wall analysis: length {dims.get('length_m', 'unknown')}m, height {dims.get('height_m', 'unknown')}m")
-        
-        else:  # Tower and other vertical structures
-            dims = self._extract_tower_dimensions_targeted(text)
-            results['dimensions'].update(dims)
-            if dims:
-                confidence_points += 2
-                detection_details.append(f"Tower analysis: {dims.get('width_m', 'unknown')}×{dims.get('depth_m', 'unknown')}×{dims.get('height_m', 'unknown')}m")
-        
-        # 4. EXTRACT SYSTEM TYPE (same logic)
-        system_type = self._extract_system_type(text)
-        if system_type:
-            results['system_type'] = system_type
-            confidence_points += 1
-            detection_details.append(f"System: {system_type.value}")
-        
-        # 5. EXTRACT BALLAST INFORMATION (structure-specific expectations)
-        ballast_items = self._extract_ballast_info_targeted(text, structure_type)
-        if ballast_items:
-            results['ballast_items'] = ballast_items
-            confidence_points += 2
-            detection_details.append(f"Ballast items: {len(ballast_items)} types found")
-        
-        # 6. EXTRACT CLADDING
-        cladding = self._extract_cladding_type(text)
-        if cladding:
-            results['cladding_type'] = cladding
-            confidence_points += 1
-        
-        results['confidence_score'] = confidence_points / max_points
-        results['detection_details'] = detection_details
+                structure_type = self._detect_structure_type(text)
+                if structure_type:
+                    results['structure_type'] = structure_type
+                    confidence_points += 3
+                    detection_details.append(f"Auto-detected structure type: {structure_type.value}")
+            
+            # 2. EXTRACT STRUCTURE NAME AND COUNT
+            try:
+                name_info = self._extract_structure_name(text, results['structure_type'])
+                if name_info['name']:
+                    results['structure_name'] = name_info['name']
+                    confidence_points += 2
+                    detection_details.append(f"Structure name: {name_info['name']}")
+                if name_info['count'] and name_info['count'] > 1:
+                    results['structure_count'] = name_info['count']
+                    confidence_points += 1
+                    detection_details.append(f"Count: {name_info['count']}")
+            except Exception:
+                detection_details.append("Structure name extraction failed")
+            
+            # 3. TARGETED DIMENSION EXTRACTION
+            try:
+                structure_type = results['structure_type']
+                
+                if structure_type == StructureType.BRIDGE:
+                    dims, spans = self._extract_bridge_dimensions_targeted(text)
+                    results['dimensions'].update(dims)
+                    results['spans'] = spans
+                    if dims or spans:
+                        confidence_points += 4
+                        detection_details.append(f"Bridge analysis: {len(spans)} spans, total: {dims.get('total_length_m', 'unknown')}m")
+                
+                elif structure_type == StructureType.WALL:
+                    dims = self._extract_wall_dimensions_targeted(text)
+                    results['dimensions'].update(dims)
+                    if dims:
+                        confidence_points += 3
+                        detection_details.append(f"Wall analysis: length {dims.get('length_m', 'unknown')}m, height {dims.get('height_m', 'unknown')}m")
+                
+                else:
+                    dims = self._extract_tower_dimensions_targeted(text)
+                    results['dimensions'].update(dims)
+                    if dims:
+                        confidence_points += 2
+                        detection_details.append(f"Tower analysis: {dims.get('width_m', 'unknown')}×{dims.get('depth_m', 'unknown')}×{dims.get('height_m', 'unknown')}m")
+            except Exception:
+                detection_details.append("Dimension extraction encountered errors")
+            
+            # 4. EXTRACT SYSTEM TYPE
+            try:
+                system_type = self._extract_system_type(text)
+                if system_type:
+                    results['system_type'] = system_type
+                    confidence_points += 1
+                    detection_details.append(f"System: {system_type.value}")
+            except Exception:
+                pass
+            
+            # 5. EXTRACT BALLAST INFORMATION
+            try:
+                ballast_items = self._extract_ballast_info_targeted(text, structure_type)
+                if ballast_items:
+                    results['ballast_items'] = ballast_items
+                    confidence_points += 2
+                    detection_details.append(f"Ballast items: {len(ballast_items)} types found")
+            except Exception:
+                detection_details.append("Ballast extraction encountered errors")
+            
+            # 6. EXTRACT CLADDING
+            try:
+                cladding = self._extract_cladding_type(text)
+                if cladding:
+                    results['cladding_type'] = cladding
+                    confidence_points += 1
+            except Exception:
+                pass
+            
+            results['confidence_score'] = confidence_points / max_points
+            results['detection_details'] = detection_details
+            
+        except Exception as e:
+            # Final error handling
+            results['detection_details'] = [f"Analysis error: {str(e)}"]
+            results['confidence_score'] = 0.1
         
         return results
+    
+    def _extract_structure_name(self, text: str, structure_type: StructureType) -> Dict[str, Any]:
+        """Extract structure name and count with improved error handling"""
+        result = {'name': None, 'count': 1}
+        
+        for pattern in self.patterns['structure_info']:
+            try:
+                match = pattern.search(text)
+                if match:
+                    groups = match.groups()
+                    if len(groups) >= 2:
+                        # Extract name and count
+                        name_group = match.group(1)
+                        count_group = match.group(2)
+                        
+                        if name_group:
+                            result['name'] = name_group.strip()
+                        
+                        if count_group:
+                            try:
+                                result['count'] = int(count_group)
+                            except (ValueError, TypeError):
+                                pass
+                                
+                    elif len(groups) >= 1:
+                        # Only name available
+                        name_group = match.group(1)
+                        if name_group:
+                            result['name'] = name_group.strip()
+                            
+                    break
+            except (AttributeError, IndexError):
+                # Log the error but continue with next pattern
+                continue
+        
+        # Fallback: look for structure type name in text
+        if not result['name']:
+            try:
+                type_pattern = rf"({structure_type.value})"
+                type_match = re.search(type_pattern, text, re.IGNORECASE)
+                if type_match and type_match.group(1):
+                    result['name'] = type_match.group(1)
+            except (AttributeError, IndexError):
+                # Final fallback
+                result['name'] = f"Unknown {structure_type.value}"
+        
+        return result
     
     def _extract_bridge_dimensions_targeted(self, text: str) -> Tuple[Dict[str, float], List[float]]:
         """Bridge-focused dimension extraction"""
         dims = {}
         spans = []
         
-        # Look specifically for bridge span patterns
-        # Pattern like "1300 5140 1300 7390 1300" (your cable bridge)
-        multi_span_match = re.search(r"(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d{4})", text)
-        if multi_span_match:
-            span_values = [int(x)/1000 for x in multi_span_match.groups()]
-            spans = span_values
-            dims['total_length_m'] = sum(spans)
-            detection_details = f"Multi-span pattern found: {[f'{s:.1f}m' for s in spans]}"
-        
-        # Look for total length (large number, likely in mm)
-        total_length_candidates = [int(x) for x in re.findall(r"(\d{5,6})", text)]
-        if total_length_candidates and not dims.get('total_length_m'):
-            # Take largest as likely total length
-            total_length_mm = max(total_length_candidates)
-            if 5000 <= total_length_mm <= 100000:  # Reasonable bridge length range
-                dims['total_length_m'] = total_length_mm / 1000
-                dims['length_m'] = dims['total_length_m']
-        
-        # Bridge width (usually smaller dimension)
-        width_candidates = [int(x) for x in re.findall(r"(\d{4})", text) 
-                           if 1000 <= int(x) <= 5000]  # 1-5m width range
-        if width_candidates:
-            dims['width_m'] = min(width_candidates) / 1000  # Smallest likely width
-        
-        # Bridge height (support tower height or clearance)
-        height_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
-                           if 2000 <= int(x) <= 8000]  # 2-8m height range
-        if height_candidates:
-            dims['height_m'] = max([h for h in height_candidates if h not in [int(s*1000) for s in spans]]) / 1000
+        try:
+            # Look specifically for bridge span patterns
+            # Pattern like "1300 5140 1300 7390 1300" (your cable bridge)
+            multi_span_match = re.search(r"(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d{4})", text)
+            if multi_span_match:
+                span_values = [int(x)/1000 for x in multi_span_match.groups()]
+                spans = span_values
+                dims['total_length_m'] = sum(spans)
+            
+            # Look for total length (large number, likely in mm)
+            total_length_candidates = [int(x) for x in re.findall(r"(\d{5,6})", text)]
+            if total_length_candidates and not dims.get('total_length_m'):
+                # Take largest as likely total length
+                total_length_mm = max(total_length_candidates)
+                if 5000 <= total_length_mm <= 100000:  # Reasonable bridge length range
+                    dims['total_length_m'] = total_length_mm / 1000
+                    dims['length_m'] = dims['total_length_m']
+            
+            # Bridge width (usually smaller dimension)
+            width_candidates = [int(x) for x in re.findall(r"(\d{4})", text) 
+                               if 1000 <= int(x) <= 5000]  # 1-5m width range
+            if width_candidates:
+                dims['width_m'] = min(width_candidates) / 1000  # Smallest likely width
+            
+            # Bridge height (support tower height or clearance)
+            height_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
+                               if 2000 <= int(x) <= 8000]  # 2-8m height range
+            if height_candidates:
+                dims['height_m'] = max([h for h in height_candidates if h not in [int(s*1000) for s in spans]]) / 1000
+        except Exception:
+            pass
         
         return dims, spans
     
@@ -411,27 +502,30 @@ class MultiStructureAnalyzer:
         """Wall-focused dimension extraction"""
         dims = {}
         
-        # Look for large linear dimensions (wall length)
-        length_candidates = [int(x) for x in re.findall(r"(\d{5})", text)]  # 5-digit for length
-        if length_candidates:
-            # Wall lengths typically 10m+ 
-            wall_lengths = [x for x in length_candidates if x >= 10000]
-            if wall_lengths:
-                dims['length_m'] = max(wall_lengths) / 1000
-                dims['width_m'] = dims['length_m']  # For BOM calculation purposes
-        
-        # Wall height (typically 3-15m)
-        height_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
-                           if 3000 <= int(x) <= 15000]
-        if height_candidates:
-            dims['height_m'] = max(height_candidates) / 1000
-        
-        # Wall thickness/depth (typically 1.5-4m)
-        thickness_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
-                              if 1500 <= int(x) <= 4000]
-        if thickness_candidates:
-            # Take smallest reasonable value as thickness
-            dims['depth_m'] = min(thickness_candidates) / 1000
+        try:
+            # Look for large linear dimensions (wall length)
+            length_candidates = [int(x) for x in re.findall(r"(\d{5})", text)]  # 5-digit for length
+            if length_candidates:
+                # Wall lengths typically 10m+ 
+                wall_lengths = [x for x in length_candidates if x >= 10000]
+                if wall_lengths:
+                    dims['length_m'] = max(wall_lengths) / 1000
+                    dims['width_m'] = dims['length_m']  # For BOM calculation purposes
+            
+            # Wall height (typically 3-15m)
+            height_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
+                               if 3000 <= int(x) <= 15000]
+            if height_candidates:
+                dims['height_m'] = max(height_candidates) / 1000
+            
+            # Wall thickness/depth (typically 1.5-4m)
+            thickness_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
+                                  if 1500 <= int(x) <= 4000]
+            if thickness_candidates:
+                # Take smallest reasonable value as thickness
+                dims['depth_m'] = min(thickness_candidates) / 1000
+        except Exception:
+            pass
         
         return dims
     
@@ -439,45 +533,48 @@ class MultiStructureAnalyzer:
         """Tower-focused dimension extraction"""
         dims = {}
         
-        # Look for plan dimensions (square/rectangular towers)
-        # Pattern like "4000 x 4000" or "2000 2000 4000"
-        plan_match = re.search(r"(\d+)\s*[x×]\s*(\d+)", text)
-        if plan_match:
-            dim1, dim2 = int(plan_match.group(1)), int(plan_match.group(2))
-            if dim1 > 100:  # Assume mm
-                dim1, dim2 = dim1/1000, dim2/1000
-            dims['width_m'] = float(dim1)
-            dims['depth_m'] = float(dim2)
-        
-        # Alternative: look for repeated dimensions (likely plan dimensions)
-        dimension_counts = {}
-        for match in re.findall(r"(\d{4})", text):
-            dim = int(match)
-            if 1000 <= dim <= 8000:  # Reasonable tower dimension range
-                dimension_counts[dim] = dimension_counts.get(dim, 0) + 1
-        
-        # Most frequent dimension likely plan dimension
-        if dimension_counts and not dims.get('width_m'):
-            most_common_dim = max(dimension_counts.items(), key=lambda x: x[1])
-            if most_common_dim[1] >= 2:  # Appears at least twice
-                dim_m = most_common_dim[0] / 1000
-                dims['width_m'] = dim_m
-                dims['depth_m'] = dim_m  # Assume square if only one dimension
-        
-        # Tower height (typically tallest dimension)
-        height_candidates = [int(x) for x in re.findall(r"(\d{4,5})", text)]
-        if height_candidates:
-            # Filter to reasonable tower heights and exclude plan dimensions
-            plan_dims_mm = set()
-            if dims.get('width_m'):
-                plan_dims_mm.add(int(dims['width_m'] * 1000))
-            if dims.get('depth_m'):
-                plan_dims_mm.add(int(dims['depth_m'] * 1000))
+        try:
+            # Look for plan dimensions (square/rectangular towers)
+            # Pattern like "4000 x 4000" or "2000 2000 4000"
+            plan_match = re.search(r"(\d+)\s*[x×]\s*(\d+)", text)
+            if plan_match:
+                dim1, dim2 = int(plan_match.group(1)), int(plan_match.group(2))
+                if dim1 > 100:  # Assume mm
+                    dim1, dim2 = dim1/1000, dim2/1000
+                dims['width_m'] = float(dim1)
+                dims['depth_m'] = float(dim2)
             
-            height_candidates = [h for h in height_candidates 
-                               if h not in plan_dims_mm and 3000 <= h <= 50000]
+            # Alternative: look for repeated dimensions (likely plan dimensions)
+            dimension_counts = {}
+            for match in re.findall(r"(\d{4})", text):
+                dim = int(match)
+                if 1000 <= dim <= 8000:  # Reasonable tower dimension range
+                    dimension_counts[dim] = dimension_counts.get(dim, 0) + 1
+            
+            # Most frequent dimension likely plan dimension
+            if dimension_counts and not dims.get('width_m'):
+                most_common_dim = max(dimension_counts.items(), key=lambda x: x[1])
+                if most_common_dim[1] >= 2:  # Appears at least twice
+                    dim_m = most_common_dim[0] / 1000
+                    dims['width_m'] = dim_m
+                    dims['depth_m'] = dim_m  # Assume square if only one dimension
+            
+            # Tower height (typically tallest dimension)
+            height_candidates = [int(x) for x in re.findall(r"(\d{4,5})", text)]
             if height_candidates:
-                dims['height_m'] = max(height_candidates) / 1000
+                # Filter to reasonable tower heights and exclude plan dimensions
+                plan_dims_mm = set()
+                if dims.get('width_m'):
+                    plan_dims_mm.add(int(dims['width_m'] * 1000))
+                if dims.get('depth_m'):
+                    plan_dims_mm.add(int(dims['depth_m'] * 1000))
+                
+                height_candidates = [h for h in height_candidates 
+                                   if h not in plan_dims_mm and 3000 <= h <= 50000]
+                if height_candidates:
+                    dims['height_m'] = max(height_candidates) / 1000
+        except Exception:
+            pass
         
         return dims
     
@@ -485,233 +582,118 @@ class MultiStructureAnalyzer:
         """Structure-specific ballast extraction"""
         ballast_items = []
         
-        # Standard ballast weights with structure-specific expectations
-        ballast_weights = {
-            750: "Light ballast",
-            1000: "Standard ballast", 
-            1493: "Jersey barrier"  # Very common in your drawings
-        }
-        
-        for weight, description in ballast_weights.items():
-            # Count occurrences with flexible patterns
-            patterns = [
-                rf"{weight}\s*kg",
-                rf"{weight}kg",
-                rf"barrier.*{weight}",
-                rf"{weight}.*ballast"
-            ]
+        try:
+            # Standard ballast weights with structure-specific expectations
+            ballast_weights = {
+                750: "Light ballast",
+                1000: "Standard ballast", 
+                1493: "Jersey barrier"  # Very common in your drawings
+            }
             
-            total_count = 0
-            for pattern in patterns:
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                total_count += len(matches)
-            
-            # Structure-specific expectations
-            if structure_type == StructureType.WALL and weight == 1493:
-                # Walls often have distributed barriers
-                total_count = max(total_count, len(re.findall(r"1493", text)))
-            elif structure_type == StructureType.TOWER and weight == 1493:
-                # Towers typically have barriers at corners
-                corner_pattern_count = len(re.findall(r"1493.*1493", text))
-                total_count = max(total_count, corner_pattern_count * 2)
-            
-            if total_count > 0:
-                ballast_items.append({
-                    'type': f"{description} {weight}kg",
-                    'weight_kg': weight,
-                    'quantity': total_count,
-                    'confidence': 'high' if total_count >= 2 else 'medium'
-                })
+            for weight, description in ballast_weights.items():
+                # Count occurrences with flexible patterns
+                patterns = [
+                    rf"{weight}\s*kg",
+                    rf"{weight}kg",
+                    rf"barrier.*{weight}",
+                    rf"{weight}.*ballast"
+                ]
+                
+                total_count = 0
+                for pattern in patterns:
+                    matches = re.findall(pattern, text, re.IGNORECASE)
+                    total_count += len(matches)
+                
+                # Structure-specific expectations
+                if structure_type == StructureType.WALL and weight == 1493:
+                    # Walls often have distributed barriers
+                    total_count = max(total_count, len(re.findall(r"1493", text)))
+                elif structure_type == StructureType.TOWER and weight == 1493:
+                    # Towers typically have barriers at corners
+                    corner_pattern_count = len(re.findall(r"1493.*1493", text))
+                    total_count = max(total_count, corner_pattern_count * 2)
+                
+                if total_count > 0:
+                    ballast_items.append({
+                        'type': f"{description} {weight}kg",
+                        'weight_kg': weight,
+                        'quantity': total_count,
+                        'confidence': 'high' if total_count >= 2 else 'medium'
+                    })
+        except Exception:
+            pass
         
         return ballast_items
     
     def _detect_structure_type(self, text: str) -> Optional[StructureType]:
         """Detect the primary structure type"""
-        text_lower = text.lower()
-        
-        # Score each structure type based on keyword frequency
-        scores = {}
-        for struct_type, keywords in self.patterns['structure_type_keywords'].items():
-            score = sum(text_lower.count(keyword) for keyword in keywords)
-            scores[struct_type] = score
-        
-        # Additional specific patterns
-        if re.search(r"cable\s*bridge", text_lower):
-            scores[StructureType.BRIDGE] = scores.get(StructureType.BRIDGE, 0) + 5
-        if re.search(r"tower.*\(\d+\s*nos?\.?\)", text_lower):
-            scores[StructureType.TOWER] = scores.get(StructureType.TOWER, 0) + 5
-        if re.search(r"\d{5}.*(?:wall|linear)", text_lower):  # Large numbers suggest wall length
-            scores[StructureType.WALL] = scores.get(StructureType.WALL, 0) + 3
-        
-        # Return highest scoring type if above threshold
-        if scores:
-            best_type = max(scores, key=scores.get)
-            if scores[best_type] > 0:
-                return best_type
+        try:
+            text_lower = text.lower()
+            
+            # Score each structure type based on keyword frequency
+            scores = {}
+            for struct_type, keywords in self.patterns['structure_type_keywords'].items():
+                score = sum(text_lower.count(keyword) for keyword in keywords)
+                scores[struct_type] = score
+            
+            # Additional specific patterns
+            if re.search(r"cable\s*bridge", text_lower):
+                scores[StructureType.BRIDGE] = scores.get(StructureType.BRIDGE, 0) + 5
+            if re.search(r"tower.*\(\d+\s*nos?\.?\)", text_lower):
+                scores[StructureType.TOWER] = scores.get(StructureType.TOWER, 0) + 5
+            if re.search(r"\d{5}.*(?:wall|linear)", text_lower):  # Large numbers suggest wall length
+                scores[StructureType.WALL] = scores.get(StructureType.WALL, 0) + 3
+            
+            # Return highest scoring type if above threshold
+            if scores:
+                best_type = max(scores, key=scores.get)
+                if scores[best_type] > 0:
+                    return best_type
+        except Exception:
+            pass
         
         return StructureType.TOWER  # Default
     
-    def _extract_structure_name(self, text: str, structure_type: StructureType) -> Dict[str, Any]:
-        """Extract structure name and count"""
-        result = {'name': None, 'count': 1}
-        
-        for pattern in self.patterns['structure_info']:
-            match = pattern.search(text)
-            if match:
-                if len(match.groups()) >= 2:
-                    result['name'] = match.group(1).strip()
-                    try:
-                        result['count'] = int(match.group(2))
-                    except (ValueError, IndexError):
-                        pass
-                else:
-                    result['name'] = match.group(1).strip()
-                break
-        
-        # Fallback: look for structure type name in text
-        if not result['name']:
-            type_match = re.search(rf"({structure_type.value})", text, re.IGNORECASE)
-            if type_match:
-                result['name'] = type_match.group(1)
-        
-        return result
-    
-    def _extract_bridge_dimensions(self, text: str) -> Tuple[Dict[str, float], List[float]]:
-        """Extract bridge-specific dimensions and spans"""
-        dims = {}
-        spans = []
-        
-        # Look for total length (5-6 digit numbers)
-        total_length_matches = re.findall(r"(\d{5,6})", text)
-        if total_length_matches:
-            # Take the largest as likely total length
-            total_length_mm = max(int(x) for x in total_length_matches)
-            dims['total_length_m'] = total_length_mm / 1000
-            dims['length_m'] = total_length_mm / 1000
-        
-        # Look for individual spans (4-digit patterns)
-        span_candidates = re.findall(r"(\d{4})", text)
-        if span_candidates:
-            # Filter to reasonable span ranges (1-10m when converted)
-            valid_spans = []
-            for span_str in span_candidates:
-                span_mm = int(span_str)
-                if 1000 <= span_mm <= 10000:  # 1m to 10m spans
-                    valid_spans.append(span_mm / 1000)
-            
-            # Remove duplicates and sort
-            spans = sorted(list(set(valid_spans)))
-            
-            # If we have multiple spans, use them
-            if len(spans) >= 3:
-                dims['width_m'] = max(spans)  # Longest span as width
-            
-        # Look for height (typically 2-4m for bridges)
-        height_candidates = [int(x) for x in re.findall(r"(\d{4})", text) 
-                           if 1500 <= int(x) <= 6000]  # 1.5-6m height range
-        if height_candidates:
-            dims['height_m'] = max(height_candidates) / 1000
-        
-        return dims, spans
-    
-    def _extract_wall_dimensions(self, text: str) -> Dict[str, float]:
-        """Extract wall-specific dimensions"""
-        dims = {}
-        
-        # Look for large dimensions (walls are typically long)
-        length_matches = re.findall(r"(\d{5})", text)  # 5-digit numbers for length
-        if length_matches:
-            length_mm = max(int(x) for x in length_matches)
-            dims['length_m'] = length_mm / 1000
-            dims['width_m'] = length_mm / 1000  # Use length as width for BOM calc
-        
-        # Look for height
-        height_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
-                           if 3000 <= int(x) <= 15000]  # 3-15m height range
-        if height_candidates:
-            dims['height_m'] = max(height_candidates) / 1000
-        
-        # Look for thickness/depth (typically 2-4m)
-        thickness_candidates = [int(x) for x in re.findall(r"(\d{4})", text)
-                              if 1500 <= int(x) <= 4000]  # 1.5-4m depth
-        if thickness_candidates:
-            dims['depth_m'] = min(thickness_candidates) / 1000  # Smallest reasonable thickness
-        
-        return dims
-    
-    def _extract_tower_dimensions(self, text: str) -> Dict[str, float]:
-        """Extract tower-specific dimensions"""
-        dims = {}
-        
-        # Look for plan dimensions (WxD)
-        plan_match = re.search(r"(\d+)\s*[x×]\s*(\d+)", text)
-        if plan_match:
-            try:
-                dim1, dim2 = int(plan_match.group(1)), int(plan_match.group(2))
-                # Convert mm to m if needed
-                if dim1 > 100:  # Assume mm
-                    dim1, dim2 = dim1/1000, dim2/1000
-                dims['width_m'] = float(dim1)
-                dims['depth_m'] = float(dim2)
-            except ValueError:
-                pass
-        
-        # Look for height
-        height_candidates = [int(x) for x in re.findall(r"(\d{4,5})", text)]
-        if height_candidates:
-            # For towers, look for the largest reasonable height
-            for height_mm in sorted(height_candidates, reverse=True):
-                if 3000 <= height_mm <= 50000:  # 3-50m range
-                    dims['height_m'] = height_mm / 1000
-                    break
-        
-        return dims
-    
     def _extract_system_type(self, text: str) -> Optional[SystemType]:
-        """Extract scaffolding system type"""
-        for pattern in self.patterns['system']:
-            match = pattern.search(text)
-            if match:
-                system_text = match.group(1).lower()
-                if 'ringlock' in system_text:
-                    return SystemType.RINGLOCK
-                elif 'cuplok' in system_text:
-                    return SystemType.CUPLOK
-                elif 'lion' in system_text:
-                    return SystemType.LION_DECK
+        """Extract scaffolding system type with improved error handling"""
+        try:
+            for pattern in self.patterns['system']:
+                match = pattern.search(text)
+                if match and match.groups():
+                    system_group = match.group(1)
+                    if system_group:
+                        system_text = system_group.lower()
+                        if 'ringlock' in system_text:
+                            return SystemType.RINGLOCK
+                        elif 'cuplok' in system_text:
+                            return SystemType.CUPLOK
+                        elif 'lion' in system_text:
+                            return SystemType.LION_DECK
+        except (AttributeError, IndexError):
+            pass
+        
         return SystemType.RINGLOCK  # Default
     
-    def _extract_ballast_info(self, text: str) -> List[Dict[str, Any]]:
-        """Extract ballast information with counting"""
-        ballast_items = []
-        
-        # Count occurrences of specific weights
-        ballast_weights = [750, 1000, 1493]
-        for weight in ballast_weights:
-            count = len(re.findall(rf"{weight}\s*kg", text, re.IGNORECASE))
-            if count > 0:
-                ballast_items.append({
-                    'type': f"Ballast {weight}kg",
-                    'weight_kg': weight,
-                    'quantity': count
-                })
-        
-        return ballast_items
-    
     def _extract_cladding_type(self, text: str) -> Optional[CladdingType]:
-        """Extract cladding type"""
-        for pattern in self.patterns['cladding']:
-            match = pattern.search(text)
-            if match:
-                cladding_text = match.group(1).lower()
-                if 'netting' in cladding_text:
-                    return CladdingType.NETTING
-                elif 'sheet' in cladding_text:
-                    return CladdingType.SHEETING
-                elif 'mesh' in cladding_text:
-                    return CladdingType.MESH
-                elif 'panel' in cladding_text:
-                    return CladdingType.SOLID_PANELS
+        """Extract cladding type with improved error handling"""
+        try:
+            for pattern in self.patterns['cladding']:
+                match = pattern.search(text)
+                if match and match.groups():
+                    cladding_group = match.group(1)
+                    if cladding_group:
+                        cladding_text = cladding_group.lower()
+                        if 'netting' in cladding_text:
+                            return CladdingType.NETTING
+                        elif 'sheet' in cladding_text:
+                            return CladdingType.SHEETING
+                        elif 'mesh' in cladding_text:
+                            return CladdingType.MESH
+                        elif 'panel' in cladding_text:
+                            return CladdingType.SOLID_PANELS
+        except (AttributeError, IndexError):
+            pass
+        
         return CladdingType.NETTING  # Default
 
 # ============================================================================
@@ -821,7 +803,7 @@ class MultiStructureBOMCalculator:
         components.append((f"{params.system.value} DIAGONAL BRACE 3.0m x 3.0m", vertical_braces))
         
         # Cable supports and tensioning (if cable bridge)
-        if "cable" in params.structure_name.lower():
+        if params.structure_name and "cable" in params.structure_name.lower():
             cable_length = total_span * 2  # Main cables
             components.append((f"BRIDGE CABLE ø20mm (per meter)", int(cable_length)))
             components.append((f"CABLE ANCHOR POINTS", support_points * 2))
@@ -1238,7 +1220,7 @@ with st.sidebar:
 tab1, tab2, tab3, tab4 = st.tabs(["📄 Drawing Analysis", "⚙️ Parameters", "📊 BOM Generation", "🔍 Validation"])
 
 # ============================================================================
-# TAB 1: DRAWING ANALYSIS
+# TAB 1: DRAWING ANALYSIS - IMPROVED ERROR HANDLING
 # ============================================================================
 with tab1:
     st.header("Multi-Structure Drawing Analysis")
@@ -1273,64 +1255,81 @@ with tab1:
             
             analysis_mode = "Targeted" if expected_type else "Auto-detection"
             with st.spinner(f"Analyzing drawing using {analysis_mode} mode..."):
-                analyzer = MultiStructureAnalyzer()
-                text_content = analyzer.extract_text_from_pdf(file_bytes)
-                analysis_results = analyzer.analyze_drawing(text_content, expected_type)
-                st.session_state.analysis_results = analysis_results
-                
-                # Update session state parameters based on analysis
-                if analysis_results['structure_name']:
-                    st.session_state.current_params.structure_name = analysis_results['structure_name']
-                if analysis_results['structure_count']:
-                    st.session_state.current_params.structure_count = analysis_results['structure_count']
-                if analysis_results['structure_type']:
-                    st.session_state.current_params.structure_type = analysis_results['structure_type']
-                if analysis_results['system_type']:
-                    st.session_state.current_params.system = analysis_results['system_type']
-                
-                # Update dimensions with validation
-                dims = analysis_results['dimensions']
-                if dims.get('width_m') and dims['width_m'] >= 1.0:
-                    st.session_state.current_params.width_m = dims['width_m']
-                if dims.get('depth_m') and dims['depth_m'] >= 1.0:
-                    st.session_state.current_params.depth_m = dims['depth_m']
-                if dims.get('height_m') and dims['height_m'] >= 0.5:
-                    st.session_state.current_params.height_m = dims['height_m']
-                if dims.get('length_m'):
-                    st.session_state.current_params.length_m = dims['length_m']
-                
-                # Update spans for bridges
-                if analysis_results['spans']:
-                    st.session_state.current_params.spans = analysis_results['spans']
-                
-                # Update ballast info with confidence weighting
-                ballast_info = analysis_results.get('ballast_items', [])
-                for item in ballast_info:
-                    if item['weight_kg'] == 1493 and item.get('confidence') == 'high':
-                        st.session_state.current_params.barrier_1493kg = max(
-                            st.session_state.current_params.barrier_1493kg, 
-                            item['quantity']
-                        )
-                
-                confidence = analysis_results['confidence_score']
-                type_hint_used = analysis_results.get('type_hint_used', False)
-                
-                # Enhanced success messaging
-                if confidence > 0.7:
-                    st.success(f"🎯 Excellent analysis! Confidence: {confidence:.1%}")
-                    if type_hint_used:
-                        st.info("💡 Structure type hint significantly improved accuracy")
-                elif confidence > 0.5:
-                    st.success(f"✅ Good analysis! Confidence: {confidence:.1%}")
-                    if not type_hint_used:
-                        st.info("💡 Tip: Select expected structure type above to improve accuracy")
-                elif confidence > 0.3:
-                    st.warning(f"⚠️ Partial analysis. Confidence: {confidence:.1%}")
-                    if not type_hint_used:
-                        st.info("💡 Try selecting the expected structure type to improve results")
-                else:
-                    st.error(f"⚠️ Limited detection. Confidence: {confidence:.1%}")
-                    st.info("💡 Please select expected structure type and verify parameters manually")
+                try:
+                    analyzer = MultiStructureAnalyzer()
+                    text_content = analyzer.extract_text_from_pdf(file_bytes)
+                    
+                    if not text_content.strip():
+                        st.warning("⚠️ No text content extracted from file. Please ensure:")
+                        st.write("• PDF contains searchable text")
+                        st.write("• File is not password protected") 
+                        st.write("• Images have sufficient contrast for OCR")
+                        st.session_state.analysis_results = None
+                    else:
+                        analysis_results = analyzer.analyze_drawing(text_content, expected_type)
+                        st.session_state.analysis_results = analysis_results
+                        
+                        # Update session state parameters based on analysis
+                        if analysis_results['structure_name']:
+                            st.session_state.current_params.structure_name = analysis_results['structure_name']
+                        if analysis_results['structure_count']:
+                            st.session_state.current_params.structure_count = analysis_results['structure_count']
+                        if analysis_results['structure_type']:
+                            st.session_state.current_params.structure_type = analysis_results['structure_type']
+                        if analysis_results['system_type']:
+                            st.session_state.current_params.system = analysis_results['system_type']
+                        
+                        # Update dimensions with validation
+                        dims = analysis_results['dimensions']
+                        if dims.get('width_m') and dims['width_m'] >= 1.0:
+                            st.session_state.current_params.width_m = dims['width_m']
+                        if dims.get('depth_m') and dims['depth_m'] >= 1.0:
+                            st.session_state.current_params.depth_m = dims['depth_m']
+                        if dims.get('height_m') and dims['height_m'] >= 0.5:
+                            st.session_state.current_params.height_m = dims['height_m']
+                        if dims.get('length_m'):
+                            st.session_state.current_params.length_m = dims['length_m']
+                        
+                        # Update spans for bridges
+                        if analysis_results['spans']:
+                            st.session_state.current_params.spans = analysis_results['spans']
+                        
+                        # Update ballast info with confidence weighting
+                        ballast_info = analysis_results.get('ballast_items', [])
+                        for item in ballast_info:
+                            if item['weight_kg'] == 1493 and item.get('confidence') == 'high':
+                                st.session_state.current_params.barrier_1493kg = max(
+                                    st.session_state.current_params.barrier_1493kg, 
+                                    item['quantity']
+                                )
+                        
+                        confidence = analysis_results['confidence_score']
+                        type_hint_used = analysis_results.get('type_hint_used', False)
+                        
+                        # Enhanced success messaging
+                        if confidence > 0.7:
+                            st.success(f"🎯 Excellent analysis! Confidence: {confidence:.1%}")
+                            if type_hint_used:
+                                st.info("💡 Structure type hint significantly improved accuracy")
+                        elif confidence > 0.5:
+                            st.success(f"✅ Good analysis! Confidence: {confidence:.1%}")
+                            if not type_hint_used:
+                                st.info("💡 Tip: Select expected structure type above to improve accuracy")
+                        elif confidence > 0.3:
+                            st.warning(f"⚠️ Partial analysis. Confidence: {confidence:.1%}")
+                            if not type_hint_used:
+                                st.info("💡 Try selecting the expected structure type to improve results")
+                        else:
+                            st.error(f"⚠️ Limited detection. Confidence: {confidence:.1%}")
+                            st.info("💡 Please select expected structure type and verify parameters manually")
+                    
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+                    st.info("Please try:")
+                    st.write("• Uploading a different file format")
+                    st.write("• Checking file integrity")
+                    st.write("• Using manual parameter entry")
+                    st.session_state.analysis_results = None
     
     with col2:
         if st.session_state.analysis_results:
@@ -1408,29 +1407,6 @@ with tab1:
                 with st.expander("🔍 Detailed Detection Log"):
                     for detail in results['detection_details']:
                         st.write(f"• {detail}")
-                    
-                    # Show analysis performance
-                    if type_hint_used:
-                        st.info("🎯 **Targeted Analysis Benefits:**")
-                        st.write("• Structure-specific pattern matching")
-                        st.write("• Context-aware dimension interpretation")
-                        st.write("• Enhanced confidence scoring")
-                        st.write("• Reduced false positives")
-            
-            # Improvement suggestions
-            if confidence < 0.6 and not type_hint_used:
-                with st.expander("💡 Tips to Improve Accuracy"):
-                    st.write("**Try these methods:**")
-                    st.write("• Select expected structure type above")
-                    st.write("• Ensure drawing contains clear dimensions")
-                    st.write("• Check that text is readable in PDF")
-                    st.write("• Include title block information")
-                    
-                    if not ballast_info:
-                        st.write("• Look for ballast/stability information")
-                        
-            elif type_hint_used and confidence > 0.7:
-                st.success("🎯 Targeted analysis achieved excellent results!")
         
         else:
             st.info("Upload a drawing to see detection results")
@@ -1443,7 +1419,7 @@ with tab1:
             st.write("• **Targeted:** You specify type for higher accuracy")
 
 # ============================================================================
-# TAB 2: PARAMETERS
+# TAB 2: PARAMETERS (unchanged)
 # ============================================================================
 with tab2:
     st.header("Structure Parameters")
@@ -1661,7 +1637,7 @@ with tab2:
             st.session_state.bom_calculated = False
 
 # ============================================================================
-# TAB 3: BOM GENERATION
+# TAB 3: BOM GENERATION (unchanged)
 # ============================================================================
 with tab3:
     st.header("Multi-Structure BOM Generation")
@@ -1787,7 +1763,7 @@ Bill of Materials:
             )
 
 # ============================================================================
-# TAB 4: VALIDATION
+# TAB 4: VALIDATION (unchanged)
 # ============================================================================
 with tab4:
     st.header("Multi-Structure Engineering Validation")
