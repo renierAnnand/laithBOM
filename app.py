@@ -144,12 +144,25 @@ class DrawingAnalyzer:
             'tower_info': [
                 re.compile(r"Tower\s+([A-Za-z0-9\-\s]+)\s*\((\d+)\s*nos?\.?\)", re.IGNORECASE),
                 re.compile(r"Structure\s*:\s*([A-Za-z0-9\-\s]+)", re.IGNORECASE),
-                re.compile(r"([A-Za-z0-9\-\s]+\s*Tower)", re.IGNORECASE)
+                re.compile(r"([A-Za-z0-9\-\s]+\s*Tower)", re.IGNORECASE),
+                # Add bridge patterns
+                re.compile(r"([A-Za-z0-9\-\s]*Bridge)", re.IGNORECASE),
+                re.compile(r"Cable\s+Bridge", re.IGNORECASE)
+            ],
+            'structure_type': [
+                re.compile(r"(Tower|Bridge|Gantry|Platform)", re.IGNORECASE)
             ],
             'dimensions': [
                 re.compile(r"(\d{3,5})\s*(?:mm|MM)", re.IGNORECASE),
                 re.compile(r"(\d+\.?\d*)\s*(?:m|M)\s*[x×]\s*(\d+\.?\d*)\s*(?:m|M)", re.IGNORECASE),
-                re.compile(r"Plan\s*:\s*(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)", re.IGNORECASE)
+                re.compile(r"Plan\s*:\s*(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)", re.IGNORECASE),
+                # Add span patterns for bridges
+                re.compile(r"(\d{4,5})\s*(?:total|span|length)", re.IGNORECASE),
+                re.compile(r"span\s*[:=]\s*(\d+)", re.IGNORECASE)
+            ],
+            'bridge_spans': [
+                re.compile(r"(\d{4})\s*[-–]\s*(\d{4})\s*[-–]\s*(\d{4})", re.IGNORECASE),
+                re.compile(r"spans?\s*[:=]\s*([\d\s,+-]+)", re.IGNORECASE)
             ],
             'ballast': [
                 re.compile(r"(\d+)\s*(?:kg|KG).*ballast", re.IGNORECASE),
@@ -201,10 +214,12 @@ class DrawingAnalyzer:
     def analyze_drawing(self, text: str) -> Dict[str, Any]:
         """Comprehensive drawing analysis"""
         results = {
+            'structure_type': 'Tower',  # Default
             'tower_name': None,
             'tower_count': 1,
             'system_type': SystemType.RINGLOCK,
-            'dimensions': {'width_m': None, 'depth_m': None, 'height_m': None},
+            'dimensions': {'width_m': None, 'depth_m': None, 'height_m': None, 'total_length_m': None},
+            'spans': [],  # For bridges
             'bay_spacing': None,
             'loads': [],
             'ballast_items': [],
@@ -213,9 +228,17 @@ class DrawingAnalyzer:
         }
         
         confidence_points = 0
-        max_points = 10
+        max_points = 12  # Increased for new features
         
-        # Extract tower information
+        # Detect structure type first
+        if any(word in text.lower() for word in ['bridge', 'cable bridge', 'gantry']):
+            results['structure_type'] = 'Bridge'
+            confidence_points += 1
+        elif any(word in text.lower() for word in ['tower', 'scaffold']):
+            results['structure_type'] = 'Tower' 
+            confidence_points += 1
+        
+        # Extract structure name/info
         for pattern in self.patterns['tower_info']:
             match = pattern.search(text)
             if match:
@@ -231,11 +254,17 @@ class DrawingAnalyzer:
                     confidence_points += 1
                 break
         
-        # Extract dimensions
-        dimensions_found = self._extract_dimensions(text)
-        if dimensions_found:
-            results['dimensions'].update(dimensions_found)
-            confidence_points += 2
+        # Extract dimensions based on structure type
+        if results['structure_type'] == 'Bridge':
+            bridge_dims = self._extract_bridge_dimensions(text)
+            results['dimensions'].update(bridge_dims)
+            if bridge_dims:
+                confidence_points += 3
+        else:
+            dimensions_found = self._extract_dimensions(text)
+            if dimensions_found:
+                results['dimensions'].update(dimensions_found)
+                confidence_points += 2
         
         # Extract system type
         for pattern in self.patterns['system']:
@@ -275,6 +304,31 @@ class DrawingAnalyzer:
         
         results['confidence_score'] = confidence_points / max_points
         return results
+    
+    def _extract_bridge_dimensions(self, text: str) -> Dict[str, float]:
+        """Extract bridge-specific dimensions"""
+        dims = {}
+        
+        # Look for total length (like 16430 in your drawing)
+        total_length_match = re.search(r"(\d{5})", text)  # 5-digit numbers likely total length
+        if total_length_match:
+            length_mm = int(total_length_match.group(1))
+            dims['total_length_m'] = length_mm / 1000
+        
+        # Look for individual spans (1300, 5140, 7390, etc.)
+        span_pattern = re.findall(r"(\d{4})", text)  # 4-digit numbers likely spans
+        if span_pattern:
+            spans = [int(x)/1000 for x in span_pattern if 1000 <= int(x) <= 8000]  # Reasonable span range
+            if spans:
+                dims['spans'] = spans
+                dims['width_m'] = max(spans)  # Use longest span as width
+        
+        # Look for heights (3900, 2100, etc.)
+        height_candidates = [int(x) for x in re.findall(r"(\d{4})", text) if 2000 <= int(x) <= 6000]
+        if height_candidates:
+            dims['height_m'] = max(height_candidates) / 1000
+        
+        return dims
     
     def _extract_dimensions(self, text: str) -> Dict[str, float]:
         """Extract dimensional information"""
