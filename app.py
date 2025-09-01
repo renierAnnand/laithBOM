@@ -1,13 +1,7 @@
 # app.py
-# Enhanced Streamlit app: Tower Spec → Auto Material List (Multi-System)
-# Author: Claude (Enhanced version)
-# Features:
-# - Multi-system support (Ringlock, Cuplok, Lion Deck)
-# - Advanced drawing analysis
-# - Engineering validation
-# - 3D visualization
-# - Interactive verification
-# - Enhanced BOM calculations
+# Simplified Enhanced Streamlit app: Tower Spec → Auto Material List
+# Author: Claude (Simplified Enhanced version)
+# Works with basic dependencies: streamlit, pandas, numpy
 
 import io
 import math
@@ -22,14 +16,6 @@ warnings.filterwarnings('ignore')
 import numpy as np
 import pandas as pd
 import streamlit as st
-# Plotly imports made optional
-try:
-    import plotly.graph_objects as go
-    import plotly.express as px
-    from plotly.subplots import make_subplots
-    PLOTLY_AVAILABLE = True
-except ImportError:
-    PLOTLY_AVAILABLE = False
 
 # Optional dependencies for enhanced functionality
 try:
@@ -45,11 +31,6 @@ except ImportError:
     convert_from_bytes = None
     pytesseract = None
     Image = None
-
-try:
-    import cv2
-except ImportError:
-    cv2 = None
 
 # ============================================================================
 # ENHANCED DATA STRUCTURES
@@ -85,21 +66,6 @@ class WindLoading:
         base_pressure = 0.6 * (self.design_speed_ms ** 2) / 1000  # kN/m²
         height_factor = min(1.2, 1.0 + (height_m - 10) * 0.02)
         return base_pressure * self.terrain_factor * height_factor
-
-@dataclass
-class StructuralLimits:
-    max_height_m: float = 50.0
-    max_area_m2: float = 400.0
-    max_unsupported_height_m: float = 12.0
-    min_tie_frequency: int = 4  # lifts
-    required_bracing_ratio: float = 0.5
-
-@dataclass
-class SafetyFactors:
-    load_factor: float = 1.4
-    material_factor: float = 1.1
-    deflection_limit: str = "L/300"
-    extras_percentage: float = 8.0
 
 @dataclass
 class TowerParams:
@@ -185,16 +151,6 @@ class DrawingAnalyzer:
                 re.compile(r"(\d+\.?\d*)\s*(?:m|M)\s*[x×]\s*(\d+\.?\d*)\s*(?:m|M)", re.IGNORECASE),
                 re.compile(r"Plan\s*:\s*(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)", re.IGNORECASE)
             ],
-            'heights': [
-                re.compile(r"Height\s*:\s*(\d+\.?\d*)\s*(?:m|MM)", re.IGNORECASE),
-                re.compile(r"(\d{4,5})\s*(?:mm|MM).*height", re.IGNORECASE),
-                re.compile(r"H\s*=\s*(\d+\.?\d*)", re.IGNORECASE)
-            ],
-            'loads': [
-                re.compile(r"(\d+\.?\d*)\s*(?:kN|KN)/m", re.IGNORECASE),
-                re.compile(r"Load\s*:\s*(\d+\.?\d*)", re.IGNORECASE),
-                re.compile(r"(\d+\.?\d*)\s*kg/m", re.IGNORECASE)
-            ],
             'ballast': [
                 re.compile(r"(\d+)\s*(?:kg|KG).*ballast", re.IGNORECASE),
                 re.compile(r"ballast.*(\d+)\s*(?:kg|KG)", re.IGNORECASE),
@@ -225,36 +181,22 @@ class DrawingAnalyzer:
             except Exception as e:
                 st.warning(f"PDF text extraction failed: {e}")
         
-        # OCR fallback with preprocessing
+        # OCR fallback
         if not text.strip() and convert_from_bytes and pytesseract:
             try:
                 images = convert_from_bytes(file_bytes, dpi=300)
                 for img in images:
-                    # Enhance image for better OCR
-                    enhanced_img = self._enhance_image_for_ocr(img)
-                    text += pytesseract.image_to_string(enhanced_img, config='--psm 6') + "\n"
+                    if Image:
+                        # Enhance image for better OCR
+                        if img.mode != 'L':
+                            img = img.convert('L')
+                        enhancer = ImageEnhance.Contrast(img)
+                        img = enhancer.enhance(1.5)
+                    text += pytesseract.image_to_string(img, config='--psm 6') + "\n"
             except Exception as e:
                 st.warning(f"OCR extraction failed: {e}")
         
         return text
-    
-    def _enhance_image_for_ocr(self, image):
-        """Enhance image quality for better OCR results"""
-        if Image is None:
-            return image
-        
-        # Convert to grayscale
-        if image.mode != 'L':
-            image = image.convert('L')
-        
-        # Enhance contrast
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.5)
-        
-        # Sharpen
-        image = image.filter(ImageFilter.SHARPEN)
-        
-        return image
     
     def analyze_drawing(self, text: str) -> Dict[str, Any]:
         """Comprehensive drawing analysis"""
@@ -352,7 +294,7 @@ class DrawingAnalyzer:
                 pass
         
         # Look for height
-        height_match = re.search(r"(\d{4,5})", text)  # Look for large numbers (likely height in mm)
+        height_match = re.search(r"(\d{4,5})", text)
         if height_match:
             try:
                 height = int(height_match.group(1))
@@ -389,45 +331,6 @@ class DrawingAnalyzer:
 class BOMCalculator:
     def __init__(self, rules: BOMRules):
         self.rules = rules
-        self.component_database = self._load_component_database()
-    
-    def _load_component_database(self) -> Dict[str, Dict]:
-        """Load component specifications and properties"""
-        return {
-            'ringlock': {
-                'standards': {
-                    '500': {'length': 0.5, 'weight': 2.1, 'capacity': 40},
-                    '1000': {'length': 1.0, 'weight': 3.8, 'capacity': 40},
-                    '1500': {'length': 1.5, 'weight': 5.5, 'capacity': 40},
-                    '2000': {'length': 2.0, 'weight': 7.2, 'capacity': 40},
-                    '2500': {'length': 2.5, 'weight': 9.0, 'capacity': 40},
-                    '3000': {'length': 3.0, 'weight': 10.8, 'capacity': 40}
-                },
-                'ledgers': {
-                    '1000': {'length': 1.0, 'weight': 4.2, 'capacity': 20},
-                    '1500': {'length': 1.5, 'weight': 5.8, 'capacity': 20},
-                    '2000': {'length': 2.0, 'weight': 7.4, 'capacity': 20},
-                    '2500': {'length': 2.5, 'weight': 9.0, 'capacity': 20}
-                },
-                'braces': {
-                    '2.0x2.0_plan': {'area': 4.0, 'weight': 8.5},
-                    '2.0x2.0_diag': {'area': 4.0, 'weight': 9.2}
-                }
-            },
-            'cuplok': {
-                'standards': {
-                    '1500': {'length': 1.5, 'weight': 5.8, 'capacity': 35},
-                    '2000': {'length': 2.0, 'weight': 7.5, 'capacity': 35},
-                    '2500': {'length': 2.5, 'weight': 9.2, 'capacity': 35},
-                    '3000': {'length': 3.0, 'weight': 11.0, 'capacity': 35}
-                },
-                'ledgers': {
-                    '1300': {'length': 1.3, 'weight': 5.1, 'capacity': 18},
-                    '2000': {'length': 2.0, 'weight': 7.2, 'capacity': 18},
-                    '2500': {'length': 2.5, 'weight': 8.8, 'capacity': 18}
-                }
-            }
-        }
     
     def calculate_comprehensive_bom(self, params: TowerParams) -> pd.DataFrame:
         """Calculate comprehensive BOM based on system type"""
@@ -452,17 +355,17 @@ class BOMCalculator:
         # Calculate components
         components = []
         
-        # Standards - use appropriate lengths
-        standard_length = self._select_optimal_standard_length(params.lift_m)
+        # Standards - use 2.0m for consistency
+        standard_length = "2.0m"
         standards_qty = posts * lifts
-        components.append(("Ringlock STANDARD " + standard_length, standards_qty))
+        components.append((f"Ringlock STANDARD {standard_length}", standards_qty))
         
         # Ledgers
-        ledger_length = self._select_optimal_ledger_length(params.bay_m)
+        ledger_length = "2.0m"
         ledgers_x = bays_x * (bays_y + 1) * lifts
         ledgers_y = bays_y * (bays_x + 1) * lifts
         total_ledgers = ledgers_x + ledgers_y
-        components.append(("Ringlock LEDGER " + ledger_length, total_ledgers))
+        components.append((f"Ringlock LEDGER {ledger_length}", total_ledgers))
         
         # Bracing calculations with wind consideration
         wind_pressure = params.wind_loading.get_design_pressure(params.height_m)
@@ -486,7 +389,7 @@ class BOMCalculator:
         # Platform components for specified levels
         for level in params.platform_levels:
             platform_area = params.width_m * params.depth_m
-            decking_panels = math.ceil(platform_area / 2.0)  # Assume 2m² per panel
+            decking_panels = math.ceil(platform_area / 2.0)
             guardrail_length = 2 * (params.width_m + params.depth_m)
             guardrail_sections = math.ceil(guardrail_length / 2.0)
             
@@ -507,15 +410,16 @@ class BOMCalculator:
         if params.ballast_750kg > 0:
             components.append(("Ballast 750kg", params.ballast_750kg))
         
-        # Ties and anchors (based on height and wind exposure)
-        tie_points = self._calculate_tie_requirements(params)
-        if tie_points > 0:
+        # Ties and anchors (based on height)
+        if params.height_m > 8.0:
+            tie_levels = math.ceil(params.lifts / self.rules.tie_frequency_lifts)
+            perimeter_ties = 2 * (math.ceil(params.width_m / 4) + math.ceil(params.depth_m / 4))
+            tie_points = tie_levels * perimeter_ties
             components.append(("Tie Rods with Anchors", tie_points))
-            components.append(("Reveal Ties", tie_points))
         
         # Cladding attachments
         if params.cladding != CladdingType.NONE:
-            cladding_area = self._calculate_cladding_area(params)
+            cladding_area = 2 * (params.width_m + params.depth_m) * params.height_m
             cladding_fixings = math.ceil(cladding_area * 2)  # 2 fixings per m²
             components.append((f"Cladding Fixings ({params.cladding.value})", cladding_fixings))
         
@@ -528,7 +432,6 @@ class BOMCalculator:
     
     def _calculate_cuplok_bom(self, params: TowerParams) -> pd.DataFrame:
         """Cuplok system BOM calculation"""
-        # Similar structure to Ringlock but with Cuplok-specific components
         bays_x = max(1, int(round(params.width_m / params.bay_m)))
         bays_y = max(1, int(round(params.depth_m / params.bay_m)))
         posts = (bays_x + 1) * (bays_y + 1)
@@ -537,35 +440,23 @@ class BOMCalculator:
         components = []
         
         # Cuplok standards
-        standard_length = "2.0m"  # Most common for Cuplok
         standards_qty = posts * lifts
-        components.append(("Cuplok STANDARD " + standard_length, standards_qty))
+        components.append(("Cuplok STANDARD 2.0m", standards_qty))
         
         # Cuplok ledgers
-        ledger_length = "2.0m"
         ledgers_x = bays_x * (bays_y + 1) * lifts
         ledgers_y = bays_y * (bays_x + 1) * lifts
         total_ledgers = ledgers_x + ledgers_y
-        components.append(("Cuplok LEDGER " + ledger_length, total_ledgers))
+        components.append(("Cuplok LEDGER 2.0m", total_ledgers))
         
         # Base components
         components.append(("Cuplok ADJUSTABLE BASE JACK", posts))
         
-        # Tube and fitting bracing system
-        bracing_length = math.sqrt(params.bay_m**2 + params.lift_m**2)
-        brace_length = self._select_tf_tube_length(bracing_length)
-        
+        # Tube and fitting bracing
         perimeter_bays = 2 * (bays_x + bays_y)
         tf_braces = perimeter_bays * math.ceil(lifts / 2)
-        components.append((f"T&F TUBE {brace_length}", tf_braces))
+        components.append(("T&F TUBE 2.0m", tf_braces))
         components.append(("T&F SWIVELS", tf_braces * 2))
-        
-        # Apply Cuplok efficiency factor
-        efficiency_factor = self.rules.cuplok_efficiency
-        for i in range(len(components)):
-            if components[i][0].startswith("Cuplok"):
-                qty = int(components[i][1] * efficiency_factor)
-                components[i] = (components[i][0], qty)
         
         df = pd.DataFrame(components, columns=["Product", "Qty per Tower"])
         df["Towers"] = params.tower_count
@@ -577,7 +468,6 @@ class BOMCalculator:
         """Lion Deck system BOM calculation"""
         components = []
         
-        # Lion Deck is primarily a decking system, so calculate based on platform areas
         total_platform_area = 0
         for level in params.platform_levels:
             platform_area = params.width_m * params.depth_m
@@ -585,8 +475,7 @@ class BOMCalculator:
         
         if total_platform_area > 0:
             # Primary beams
-            primary_beam_length = max(params.width_m, params.depth_m)
-            primary_beam_count = math.ceil(total_platform_area / (primary_beam_length * 2))
+            primary_beam_count = math.ceil(total_platform_area / 4.0)
             components.append(("Lion Deck PRIMARY BEAM 2.0m", primary_beam_count))
             
             # Secondary beams
@@ -610,13 +499,10 @@ class BOMCalculator:
     
     def _calculate_hybrid_bom(self, params: TowerParams) -> pd.DataFrame:
         """Hybrid system BOM calculation"""
-        # For hybrid systems, combine components from multiple systems
-        # This is simplified - in practice, would need more sophisticated logic
-        
+        # Combine Ringlock structure with Lion Deck platforms
         ringlock_bom = self._calculate_ringlock_bom(params)
         lion_deck_bom = self._calculate_lion_deck_bom(params)
         
-        # Combine BOMs and apply complexity factor
         combined_components = []
         
         # Add Ringlock structural components
@@ -628,7 +514,7 @@ class BOMCalculator:
         for _, row in lion_deck_bom.iterrows():
             combined_components.append((row["Product"], row["Qty per Tower"]))
         
-        # Apply hybrid complexity factor
+        # Apply complexity factor
         for i in range(len(combined_components)):
             qty = int(combined_components[i][1] * self.rules.hybrid_complexity_factor)
             combined_components[i] = (combined_components[i][0], qty)
@@ -638,59 +524,6 @@ class BOMCalculator:
         df["Total (All Towers)"] = df["Qty per Tower"] * df["Towers"]
         
         return df
-    
-    def _select_optimal_standard_length(self, lift_height: float) -> str:
-        """Select optimal standard length based on lift height"""
-        if lift_height <= 1.0:
-            return "1000"
-        elif lift_height <= 1.5:
-            return "1500"
-        elif lift_height <= 2.0:
-            return "2000"
-        elif lift_height <= 2.5:
-            return "2500"
-        else:
-            return "3000"
-    
-    def _select_optimal_ledger_length(self, bay_spacing: float) -> str:
-        """Select optimal ledger length based on bay spacing"""
-        if bay_spacing <= 1.5:
-            return "1500"
-        elif bay_spacing <= 2.0:
-            return "2000"
-        elif bay_spacing <= 2.5:
-            return "2500"
-        else:
-            return "3000"
-    
-    def _select_tf_tube_length(self, required_length: float) -> str:
-        """Select appropriate T&F tube length"""
-        available_lengths = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0]
-        selected_length = min(available_lengths, key=lambda x: abs(x - required_length))
-        return f"{selected_length:.1f}m"
-    
-    def _calculate_tie_requirements(self, params: TowerParams) -> int:
-        """Calculate tie requirements based on height and wind loading"""
-        if params.height_m <= 8.0:
-            return 0
-        
-        # Basic tie requirement every 4-6 lifts
-        tie_levels = math.ceil(params.lifts / self.rules.tie_frequency_lifts)
-        
-        # Increase for high wind loading
-        wind_pressure = params.wind_loading.get_design_pressure(params.height_m)
-        if wind_pressure > 1.0:
-            tie_levels = int(tie_levels * 1.5)
-        
-        # Ties around perimeter
-        perimeter_points = 2 * (math.ceil(params.width_m / 4) + math.ceil(params.depth_m / 4))
-        
-        return tie_levels * perimeter_points
-    
-    def _calculate_cladding_area(self, params: TowerParams) -> float:
-        """Calculate total cladding area"""
-        perimeter = 2 * (params.width_m + params.depth_m)
-        return perimeter * params.height_m
 
 # ============================================================================
 # ENGINEERING VALIDATION
@@ -698,8 +531,9 @@ class BOMCalculator:
 
 class EngineeringValidator:
     def __init__(self):
-        self.limits = StructuralLimits()
-        self.safety_factors = SafetyFactors()
+        self.max_height_m = 50.0
+        self.max_area_m2 = 400.0
+        self.max_unsupported_height_m = 12.0
     
     def validate_structure(self, params: TowerParams) -> Dict[str, Any]:
         """Comprehensive structural validation"""
@@ -708,14 +542,14 @@ class EngineeringValidator:
         recommendations = []
         
         # Height checks
-        if params.height_m > self.limits.max_height_m:
-            errors.append(f"Height {params.height_m}m exceeds maximum allowed {self.limits.max_height_m}m")
-        elif params.height_m > self.limits.max_unsupported_height_m and not self._has_adequate_ties(params):
+        if params.height_m > self.max_height_m:
+            errors.append(f"Height {params.height_m}m exceeds maximum allowed {self.max_height_m}m")
+        elif params.height_m > self.max_unsupported_height_m:
             warnings.append(f"Height {params.height_m}m requires adequate tying for stability")
         
         # Area checks
         total_area = params.total_area_m2
-        if total_area > self.limits.max_area_m2:
+        if total_area > self.max_area_m2:
             warnings.append(f"Total area {total_area:.1f}m² is large - verify foundation capacity")
         
         # Aspect ratio checks
@@ -732,216 +566,38 @@ class EngineeringValidator:
         if wind_pressure > 1.5:
             warnings.append(f"High wind pressure {wind_pressure:.2f} kN/m² - additional bracing recommended")
         
-        # Ballast requirements
-        ballast_ratio = self._calculate_ballast_ratio(params)
+        # Ballast recommendations
+        total_ballast = (params.ballast_750kg * 750 + 
+                        params.ballast_1000kg * 1000 + 
+                        params.barrier_1493kg * 1493)
+        structure_weight = params.total_area_m2 * params.height_m * 10  # kg estimate
+        ballast_ratio = total_ballast / max(structure_weight, 1000)
+        
         if ballast_ratio < 0.5:
             recommendations.append("Consider additional ballast for overturning stability")
         
-        # Platform loading
-        if params.load_category == LoadCategory.HEAVY:
-            recommendations.append("Heavy loading requires enhanced connection design")
-        
-        # Seismic considerations
-        if params.seismic_zone in ["High", "Very High"]:
-            recommendations.append("Seismic design may require special detailing")
+        # Calculate safety rating
+        if len(errors) > 0:
+            rating = "UNSAFE"
+        elif len(warnings) > 2:
+            rating = "CAUTION"
+        elif len(warnings) > 0:
+            rating = "REVIEW REQUIRED"
+        else:
+            rating = "ACCEPTABLE"
         
         return {
             'is_valid': len(errors) == 0,
             'errors': errors,
             'warnings': warnings,
             'recommendations': recommendations,
-            'overall_rating': self._calculate_safety_rating(len(errors), len(warnings))
+            'overall_rating': rating,
+            'wind_pressure': wind_pressure,
+            'ballast_ratio': ballast_ratio
         }
-    
-    def _has_adequate_ties(self, params: TowerParams) -> bool:
-        """Check if structure has adequate tying"""
-        # Simplified check - in practice would be more complex
-        return params.height_m / params.lift_m <= 8
-    
-    def _calculate_ballast_ratio(self, params: TowerParams) -> float:
-        """Calculate ballast to structure weight ratio"""
-        total_ballast = (params.ballast_750kg * 750 + 
-                        params.ballast_1000kg * 1000 + 
-                        params.barrier_1493kg * 1493)
-        
-        # Estimate structure weight (simplified)
-        structure_weight = params.total_area_m2 * params.height_m * 10  # kg
-        
-        return total_ballast / max(structure_weight, 1000)
-    
-    def _calculate_safety_rating(self, errors: int, warnings: int) -> str:
-        """Calculate overall safety rating"""
-        if errors > 0:
-            return "UNSAFE"
-        elif warnings > 2:
-            return "CAUTION"
-        elif warnings > 0:
-            return "REVIEW REQUIRED"
-        else:
-            return "ACCEPTABLE"
 
 # ============================================================================
-# VISUALIZATION COMPONENTS
-# ============================================================================
-
-class StructureVisualizer:
-    def create_3d_view(self, params: TowerParams):
-        """Create 3D visualization of the structure"""
-        if not PLOTLY_AVAILABLE:
-            return self._create_text_view(params)
-            
-        fig = go.Figure()
-        
-        # Create basic structure outline
-        x_coords = [0, params.width_m, params.width_m, 0, 0]
-        y_coords = [0, 0, params.depth_m, params.depth_m, 0]
-        
-        # Add base outline
-        fig.add_trace(go.Scatter3d(
-            x=x_coords, y=y_coords, z=[0]*5,
-            mode='lines',
-            line=dict(color='blue', width=4),
-            name='Base'
-        ))
-        
-        # Add vertical posts
-        bays_x = int(params.width_m / params.bay_m) + 1
-        bays_y = int(params.depth_m / params.bay_m) + 1
-        
-        for i in range(bays_x):
-            for j in range(bays_y):
-                x = i * params.bay_m
-                y = j * params.bay_m
-                fig.add_trace(go.Scatter3d(
-                    x=[x, x], y=[y, y], z=[0, params.height_m],
-                    mode='lines',
-                    line=dict(color='red', width=2),
-                    showlegend=False
-                ))
-        
-        # Add platform levels
-        for level_lift in params.platform_levels:
-            level_height = level_lift * params.lift_m
-            fig.add_trace(go.Scatter3d(
-                x=x_coords, y=y_coords, z=[level_height]*5,
-                mode='lines',
-                line=dict(color='green', width=3),
-                name=f'Platform Level {level_lift}'
-            ))
-        
-        # Update layout
-        fig.update_layout(
-            title=f"3D View: {params.tower_name}",
-            scene=dict(
-                xaxis_title="Width (m)",
-                yaxis_title="Depth (m)",
-                zaxis_title="Height (m)",
-                aspectmode='data'
-            ),
-            showlegend=True
-        )
-        
-        return fig
-    
-    def _create_text_view(self, params: TowerParams):
-        """Create text-based visualization when plotly is not available"""
-        view_data = {
-            "Structure": params.tower_name,
-            "System": params.system.value,
-            "Dimensions (W×D×H)": f"{params.width_m}×{params.depth_m}×{params.height_m}m",
-            "Bay Spacing": f"{params.bay_m}m",
-            "Number of Lifts": params.lifts,
-            "Platform Levels": str(params.platform_levels),
-            "Total Plan Area": f"{params.width_m * params.depth_m:.1f}m²"
-        }
-        return view_data
-    
-    def create_load_analysis_chart(self, params: TowerParams, bom_df: pd.DataFrame):
-        """Create load analysis visualization"""
-        if not PLOTLY_AVAILABLE:
-            return self._create_text_analysis(params, bom_df)
-            
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('Wind Pressure vs Height', 'Component Weight Distribution', 
-                          'Load Factors', 'Foundation Loads'),
-            specs=[[{"secondary_y": False}, {"type": "pie"}],
-                   [{"type": "bar"}, {"type": "scatter"}]]
-        )
-        
-        # Wind pressure analysis
-        heights = np.linspace(0, params.height_m, 20)
-        pressures = [params.wind_loading.get_design_pressure(h) for h in heights]
-        
-        fig.add_trace(
-            go.Scatter(x=heights, y=pressures, name="Wind Pressure"),
-            row=1, col=1
-        )
-        
-        # Component weight distribution (simplified)
-        component_weights = {
-            'Standards': 0.3,
-            'Ledgers': 0.25,
-            'Braces': 0.2,
-            'Decking': 0.15,
-            'Accessories': 0.1
-        }
-        
-        fig.add_trace(
-            go.Pie(labels=list(component_weights.keys()), 
-                  values=list(component_weights.values()),
-                  name="Component Weights"),
-            row=1, col=2
-        )
-        
-        # Load factors
-        load_factors = ['Dead Load', 'Live Load', 'Wind Load']
-        factor_values = [1.2, 1.4, 1.2]
-        
-        fig.add_trace(
-            go.Bar(x=load_factors, y=factor_values, name="Load Factors"),
-            row=2, col=1
-        )
-        
-        # Foundation loads (simplified)
-        foundation_loads = np.linspace(0, params.total_area_m2, 10)
-        base_pressures = foundation_loads * 0.1  # kN/m²
-        
-        fig.add_trace(
-            go.Scatter(x=foundation_loads, y=base_pressures, 
-                      name="Foundation Pressure"),
-            row=2, col=2
-        )
-        
-        fig.update_layout(height=800, title_text="Structural Load Analysis")
-        return fig
-    
-    def _create_text_analysis(self, params: TowerParams, bom_df: pd.DataFrame):
-        """Create text-based analysis when plotly is not available"""
-        wind_pressure_top = params.wind_loading.get_design_pressure(params.height_m)
-        total_components = bom_df["Total for Delivery"].sum()
-        
-        analysis_data = {
-            "Wind Analysis": {
-                "Design Wind Speed": f"{params.wind_loading.design_speed_ms} m/s",
-                "Pressure at Top": f"{wind_pressure_top:.2f} kN/m²",
-                "Exposure Category": params.wind_loading.exposure_category
-            },
-            "Component Summary": {
-                "Total Components": total_components,
-                "Unique Items": len(bom_df),
-                "Estimated Weight": f"{total_components * 5:,} kg"
-            },
-            "Load Factors": {
-                "Dead Load Factor": "1.2",
-                "Live Load Factor": "1.4", 
-                "Wind Load Factor": "1.2"
-            }
-        }
-        return analysis_data
-
-# ============================================================================
-# ENHANCED STREAMLIT APPLICATION
+# STREAMLIT APPLICATION
 # ============================================================================
 
 st.set_page_config(
@@ -991,7 +647,7 @@ with st.sidebar:
     )
 
 # Main content area
-tab1, tab2, tab3, tab4 = st.tabs(["📄 Drawing Analysis", "⚙️ Parameters", "📊 BOM Generation", "🔍 Validation & 3D"])
+tab1, tab2, tab3, tab4 = st.tabs(["📄 Drawing Analysis", "⚙️ Parameters", "📊 BOM Generation", "🔍 Validation"])
 
 # ============================================================================
 # TAB 1: DRAWING ANALYSIS
@@ -1247,7 +903,7 @@ with tab2:
         
         if submitted:
             st.success("Parameters updated successfully!")
-            st.session_state.bom_calculated = False  # Reset BOM calculation flag
+            st.session_state.bom_calculated = False
 
 # ============================================================================
 # TAB 3: BOM GENERATION
@@ -1278,7 +934,7 @@ with tab3:
         with col2:
             st.metric("Total Components", bom_df["Total for Delivery"].sum())
         with col3:
-            estimated_weight = bom_df["Total for Delivery"].sum() * 5  # Rough estimate
+            estimated_weight = bom_df["Total for Delivery"].sum() * 5
             st.metric("Estimated Weight (kg)", f"{estimated_weight:,}")
         
         # Display BOM table
@@ -1300,49 +956,13 @@ with tab3:
             filtered_df = filtered_df[filtered_df['Total for Delivery'] >= min_qty]
         
         # Display filtered results
-        st.dataframe(
-            filtered_df,
-            use_container_width=True,
-            height=400,
-            column_config={
-                "Product": st.column_config.TextColumn("Product", width="medium"),
-                "Qty per Tower": st.column_config.NumberColumn("Qty per Tower", format="%d"),
-                "Towers": st.column_config.NumberColumn("Towers", format="%d"),
-                "Total (All Towers)": st.column_config.NumberColumn("Total", format="%d"),
-                "Extras %": st.column_config.NumberColumn("Extras %", format="%.0f%%"),
-                "Extras Qty": st.column_config.NumberColumn("Extras Qty", format="%d"),
-                "Total for Delivery": st.column_config.NumberColumn("Total for Delivery", format="%d")
-            }
-        )
+        st.dataframe(filtered_df, use_container_width=True, height=400)
         
         # Export options
         st.subheader("📤 Export Options")
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            # Excel export
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                # Project info sheet
-                project_info = pd.DataFrame([
-                    ["Project", st.session_state.current_params.tower_name],
-                    ["System", st.session_state.current_params.system.value],
-                    ["Towers", st.session_state.current_params.tower_count],
-                    ["Dimensions", f"{st.session_state.current_params.width_m}×{st.session_state.current_params.depth_m}×{st.session_state.current_params.height_m}m"],
-                    ["Generated", pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")]
-                ], columns=["Field", "Value"])
-                
-                project_info.to_excel(writer, sheet_name='Project Info', index=False)
-                filtered_df.to_excel(writer, sheet_name='BOM', index=False)
-            
-            st.download_button(
-                "📊 Download Excel",
-                data=excel_buffer.getvalue(),
-                file_name=f"BOM_{st.session_state.current_params.tower_name.replace(' ', '_')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        
-        with col2:
             # CSV export
             csv_buffer = io.StringIO()
             filtered_df.to_csv(csv_buffer, index=False)
@@ -1354,8 +974,8 @@ with tab3:
                 mime="text/csv"
             )
         
-        with col3:
-            # JSON export for API integration
+        with col2:
+            # JSON export
             json_data = {
                 "project_info": {
                     "name": st.session_state.current_params.tower_name,
@@ -1372,12 +992,31 @@ with tab3:
                 file_name=f"BOM_{st.session_state.current_params.tower_name.replace(' ', '_')}.json",
                 mime="application/json"
             )
+        
+        with col3:
+            # Text summary
+            summary_text = f"""Project: {st.session_state.current_params.tower_name}
+System: {st.session_state.current_params.system.value}
+Towers: {st.session_state.current_params.tower_count}
+Dimensions: {st.session_state.current_params.width_m}×{st.session_state.current_params.depth_m}×{st.session_state.current_params.height_m}m
+
+Bill of Materials:
+"""
+            for _, row in filtered_df.iterrows():
+                summary_text += f"{row['Product']}: {row['Total for Delivery']}\n"
+            
+            st.download_button(
+                "📄 Download Summary",
+                data=summary_text,
+                file_name=f"Summary_{st.session_state.current_params.tower_name.replace(' ', '_')}.txt",
+                mime="text/plain"
+            )
 
 # ============================================================================
-# TAB 4: VALIDATION & 3D VIEW
+# TAB 4: VALIDATION
 # ============================================================================
 with tab4:
-    st.header("Engineering Validation & 3D Visualization")
+    st.header("Engineering Validation & Analysis")
     
     # Engineering validation
     st.subheader("🛡️ Structural Validation")
@@ -1386,7 +1025,7 @@ with tab4:
     validation_results = validator.validate_structure(st.session_state.current_params)
     
     # Display validation status
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         if validation_results['is_valid']:
@@ -1404,8 +1043,12 @@ with tab4:
             st.error(f"Rating: {rating}")
     
     with col3:
-        total_issues = len(validation_results['errors']) + len(validation_results['warnings'])
-        st.metric("Issues Found", total_issues)
+        wind_pressure = validation_results['wind_pressure']
+        st.metric("Wind Pressure", f"{wind_pressure:.2f} kN/m²")
+    
+    with col4:
+        ballast_ratio = validation_results['ballast_ratio']
+        st.metric("Ballast Ratio", f"{ballast_ratio:.2f}")
     
     # Display detailed validation results
     if validation_results['errors']:
@@ -1425,55 +1068,55 @@ with tab4:
     
     st.divider()
     
-    # 3D Visualization
-    st.subheader("🎯 3D Structure Visualization")
+    # Structure summary
+    st.subheader("📊 Structure Summary")
+    params = st.session_state.current_params
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        visualizer = StructureVisualizer()
-        structure_view = visualizer.create_3d_view(st.session_state.current_params)
-        
-        if PLOTLY_AVAILABLE:
-            st.plotly_chart(structure_view, use_container_width=True)
-        else:
-            st.warning("📊 Install plotly for 3D visualization: `pip install plotly`")
-            st.subheader("Structure Overview")
-            for key, value in structure_view.items():
-                st.write(f"**{key}:** {value}")
-    
-    with col2:
-        st.subheader("📊 Structure Summary")
-        params = st.session_state.current_params
-        
         st.metric("Total Height", f"{params.height_m:.1f} m")
         st.metric("Plan Area", f"{params.width_m * params.depth_m:.1f} m²")
         st.metric("Number of Lifts", params.lifts)
+    
+    with col2:
         st.metric("Bay Spacing", f"{params.bay_m:.1f} m")
         st.metric("Platform Levels", len(params.platform_levels))
-        
-        # Wind pressure at top
-        wind_pressure = params.wind_loading.get_design_pressure(params.height_m)
-        st.metric("Wind Pressure (top)", f"{wind_pressure:.2f} kN/m²")
+        st.metric("System Type", params.system.value)
     
-    st.divider()
+    with col3:
+        st.metric("Load Category", params.load_category.value)
+        st.metric("Cladding", params.cladding.value)
+        total_ballast = (params.ballast_750kg * 750 + 
+                        params.ballast_1000kg * 1000 + 
+                        params.barrier_1493kg * 1493)
+        st.metric("Total Ballast", f"{total_ballast:,} kg")
     
-    # Load analysis charts
-    st.subheader("📈 Structural Load Analysis")
-    
+    # Simple text-based analysis
     if st.session_state.bom_calculated and 'bom_df' in st.session_state:
-        load_analysis = visualizer.create_load_analysis_chart(st.session_state.current_params, st.session_state.bom_df)
+        st.subheader("📈 BOM Analysis")
+        bom_df = st.session_state.bom_df
         
-        if PLOTLY_AVAILABLE:
-            st.plotly_chart(load_analysis, use_container_width=True)
-        else:
-            st.subheader("Load Analysis Summary")
-            for category, data in load_analysis.items():
-                st.write(f"**{category}:**")
-                for key, value in data.items():
-                    st.write(f"  • {key}: {value}")
+        # Component category analysis
+        standards = bom_df[bom_df['Product'].str.contains('STANDARD', case=False, na=False)]['Total for Delivery'].sum()
+        ledgers = bom_df[bom_df['Product'].str.contains('LEDGER', case=False, na=False)]['Total for Delivery'].sum()
+        braces = bom_df[bom_df['Product'].str.contains('BRACE', case=False, na=False)]['Total for Delivery'].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Standards", standards)
+        with col2:
+            st.metric("Ledgers", ledgers)
+        with col3:
+            st.metric("Braces", braces)
+        
+        # Show top components
+        st.subheader("Top Components by Quantity")
+        top_components = bom_df.nlargest(5, 'Total for Delivery')[['Product', 'Total for Delivery']]
+        st.dataframe(top_components, use_container_width=True)
+    
     else:
-        st.info("Generate BOM first to see load analysis charts.")
+        st.info("Generate BOM first to see detailed analysis.")
 
 # Footer
 st.divider()
