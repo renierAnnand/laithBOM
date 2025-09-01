@@ -1185,35 +1185,153 @@ if 'bom_calculated' not in st.session_state:
 st.title("🏗️ Multi-Structure BOM Generator")
 st.markdown("*Comprehensive scaffolding BOM generator for Towers, Bridges, Walls, and more*")
 
-# Sidebar configuration
+# Enhanced Sidebar configuration with descriptions
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # BOM Rules
+    # BOM Rules with descriptions
     with st.expander("📋 BOM Rules", expanded=False):
-        plan_brace_alt = st.checkbox("Plan braces on alternate lifts", value=True)
-        diag_brace_alt = st.checkbox("Diagonal braces on alternate lifts", value=True)
-        tie_frequency = st.slider("Tie frequency (lifts)", 3, 8, 4)
-        bridge_span_factor = st.slider("Bridge spanning factor", 1.0, 2.0, 1.3, 0.1)
-        wall_continuity_factor = st.slider("Wall continuity factor", 0.7, 1.2, 0.9, 0.1)
-        cantilever_support_factor = st.slider("Cantilever support factor", 1.2, 2.5, 1.8, 0.1)
+        plan_brace_alt = st.checkbox(
+            "Plan braces on alternate lifts", 
+            value=True,
+            help="Install plan braces every other lift instead of every lift. Reduces material while maintaining stability for most structures."
+        )
+        
+        diag_brace_alt = st.checkbox(
+            "Diagonal braces on alternate lifts", 
+            value=True,
+            help="Install diagonal braces every other lift. Standard practice for scaffolding to optimize material usage and structural integrity."
+        )
+        
+        tie_frequency = st.slider(
+            "Tie frequency (lifts)", 
+            min_value=3, max_value=8, value=4,
+            help="Number of lifts between tie points. Lower values = more ties = higher cost but better stability. Typical range: 4-6 lifts."
+        )
+        
+        bridge_span_factor = st.slider(
+            "Bridge spanning factor", 
+            min_value=1.0, max_value=2.0, value=1.3, step=0.1,
+            help="Material multiplier for bridge structures. Accounts for additional beams, supports, and reinforcement needed for spanning loads. 1.3 = 30% extra material."
+        )
+        
+        wall_continuity_factor = st.slider(
+            "Wall continuity factor", 
+            min_value=0.7, max_value=1.2, value=0.9, step=0.1,
+            help="Material efficiency for linear wall structures. Values <1.0 reflect economies of scale in long runs. 0.9 = 10% material savings vs individual towers."
+        )
+        
+        cantilever_support_factor = st.slider(
+            "Cantilever support factor", 
+            min_value=1.2, max_value=2.5, value=1.8, step=0.1,
+            help="Material multiplier for cantilever structures. Accounts for heavy back-propping and additional ballast needed to resist overturning. 1.8 = 80% extra material."
+        )
     
-    # Safety factors
+    # Safety factors with descriptions
     with st.expander("🛡️ Safety Factors", expanded=False):
-        live_load_factor = st.slider("Live load factor", 1.0, 2.0, 1.4, 0.1)
-        wind_load_factor = st.slider("Wind load factor", 1.0, 2.0, 1.2, 0.1)
-        extras_pct = st.slider("Extras percentage", 0, 20, 8, 1)
+        st.caption("These factors are applied to structural calculations, not BOM quantities")
+        
+        live_load_factor = st.slider(
+            "Live load factor", 
+            min_value=1.0, max_value=2.0, value=1.4, step=0.1,
+            help="Safety factor for variable loads (people, materials, equipment). Standard value: 1.4. Higher values for critical applications or heavy loads."
+        )
+        
+        wind_load_factor = st.slider(
+            "Wind load factor", 
+            min_value=1.0, max_value=2.0, value=1.2, step=0.1,
+            help="Safety factor for wind loading calculations. Standard value: 1.2. Increase for exposed sites or tall structures. Affects bracing requirements."
+        )
+        
+        extras_pct = st.slider(
+            "Extras percentage", 
+            min_value=0, max_value=20, value=8, step=1,
+            help="Additional components for replacements, modifications, and contingencies. Typical range: 5-15%. Includes damaged parts, design changes, and spares."
+        )
+        
+        st.info("💡 **Tip:** Higher safety factors increase bracing requirements but don't directly multiply BOM quantities. Use 'Extras %' for material contingencies.")
     
-    # Create rules object
-    bom_rules = BOMRules(
-        plan_brace_alt_lifts=plan_brace_alt,
-        diag_brace_alt_lifts=diag_brace_alt,
-        tie_frequency_lifts=tie_frequency,
-        live_load_factor=live_load_factor,
-        wind_load_factor=wind_load_factor,
-        bridge_spanning_factor=bridge_span_factor,
-        wall_continuity_factor=wall_continuity_factor,
-        cantilever_support_factor=cantilever_support_factor
+    # Additional configuration options
+    with st.expander("🔧 Advanced Settings", expanded=False):
+        st.subheader("Analysis Options")
+        
+        auto_ballast = st.checkbox(
+            "Auto-calculate minimum ballast",
+            value=True,
+            help="Automatically calculate minimum ballast requirements based on structure height, area, and wind exposure."
+        )
+        
+        include_weather_protection = st.checkbox(
+            "Include weather protection allowance",
+            value=False,
+            help="Add materials for temporary weather protection (tarpaulins, barriers). Adds ~5% to perimeter materials."
+        )
+        
+        st.subheader("BOM Format Options")
+        
+        group_similar_items = st.checkbox(
+            "Group similar components",
+            value=True,
+            help="Combine similar items (e.g., all 2.0m standards) into single line items. Uncheck for detailed component-by-component listing."
+        )
+        
+        include_unit_weights = st.checkbox(
+            "Include component weights",
+            value=False,
+            help="Add weight estimates for each component type. Useful for logistics planning and crane capacity calculations."
+        )
+        
+        st.subheader("Engineering Validation")
+        
+        strict_validation = st.checkbox(
+            "Strict validation mode",
+            value=False,
+            help="Apply stricter engineering limits and additional safety checks. May flag structures that would pass basic validation."
+        )
+        
+        # Create enhanced rules object with new options
+        bom_rules = BOMRules(
+            plan_brace_alt_lifts=plan_brace_alt,
+            diag_brace_alt_lifts=diag_brace_alt,
+            tie_frequency_lifts=tie_frequency,
+            live_load_factor=live_load_factor,
+            wind_load_factor=wind_load_factor,
+            bridge_spanning_factor=bridge_span_factor,
+            wall_continuity_factor=wall_continuity_factor,
+            cantilever_support_factor=cantilever_support_factor
+        )
+        
+        # Store additional options in session state for use throughout app
+        st.session_state.config = {
+            'auto_ballast': auto_ballast,
+            'include_weather_protection': include_weather_protection,
+            'group_similar_items': group_similar_items,
+            'include_unit_weights': include_unit_weights,
+            'strict_validation': strict_validation,
+            'extras_pct': extras_pct
+        }
+
+# Optional: Add configuration summary at bottom of sidebar
+with st.sidebar:
+    st.divider()
+    st.caption("📊 **Current Config Summary**")
+    st.caption(f"Safety margins: Live {live_load_factor:.1f}x, Wind {wind_load_factor:.1f}x")
+    st.caption(f"Bridge factor: {bridge_span_factor:.1f}x, Wall factor: {wall_continuity_factor:.1f}x")
+    st.caption(f"Extras allowance: {extras_pct}%")
+    
+    # Quick preset buttons
+    st.caption("⚡ **Quick Presets:**")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Conservative", help="Higher safety factors and material allowances"):
+            # Set conservative values
+            st.session_state.conservative_mode = True
+            st.experimental_rerun()
+    with col2:
+        if st.button("Optimized", help="Standard factors for typical projects"):
+            # Set optimized values  
+            st.session_state.conservative_mode = False
+            st.experimental_rerun()
     )
 
 # Main content area
